@@ -1,0 +1,8 @@
+[package]
+name = "rust-audio-composer"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+eframe = "0.24.0"
+egui = "0.24.0"
