@@ -1,5 +1,6 @@
 use eframe::egui;
 use egui_plot::{Line, Plot, PlotPoints};
+mod ui;
 
 struct DAWApp {
     playing: bool,
@@ -19,57 +20,6 @@ impl Default for DAWApp {
     }
 }
 
-impl DAWApp {
-    fn show_piano_window(&mut self, ctx: &egui::Context) {
-        egui::Window::new("Virtual Piano")
-            .open(&mut self.show_piano)
-            .default_size([400.0, 200.0])
-            .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    let white_key_width = 40.0;
-                    let white_key_height = 160.0;
-                    let black_key_width = 24.0;
-                    let black_key_height = 100.0;
-
-                    for octave in 0..2 {  // Display two octaves
-                        for (i, note) in ["C", "D", "E", "F", "G", "A", "B"].iter().enumerate() {
-                            let response = ui.add(egui::Button::new(*note)
-                                .min_size(egui::vec2(white_key_width, white_key_height))
-                                .fill(egui::Color32::WHITE)
-                                .stroke(egui::Stroke::new(1.0, egui::Color32::BLACK)));
-
-                            if response.clicked() {
-                                println!("Played white note: {}", note);
-                            }
-
-                            if i < 5 && *note != "E" && *note != "B" {
-                                let black_note = match *note {
-                                    "C" => "C#",
-                                    "D" => "D#",
-                                    "F" => "F#",
-                                    "G" => "G#",
-                                    "A" => "A#",
-                                    _ => unreachable!(),
-                                };
-
-                                let black_key_response = ui.put(
-                                    response.rect.translate(egui::vec2(white_key_width * 0.7, 0.0))
-                                        .shrink2(egui::vec2(black_key_width / 2.0, white_key_height - black_key_height)),
-                                    egui::Button::new(black_note)
-                                        .fill(egui::Color32::BLACK)
-                                        .stroke(egui::Stroke::new(1.0, egui::Color32::WHITE))
-                                );
-
-                                if black_key_response.clicked() {
-                                    println!("Played black note: {}", black_note);
-                                }
-                            }
-                        }
-                    }
-                });
-            });
-    }
-}
 
 impl eframe::App for DAWApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
