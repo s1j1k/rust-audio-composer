@@ -1,5 +1,5 @@
 use eframe::egui;
-// use egui::plot::{Line, Plot, PlotPoints};
+use egui_plot::{Line, Plot, PlotPoints};
 
 struct DAWApp {
     playing: bool,
@@ -59,17 +59,18 @@ impl eframe::App for DAWApp {
 
         egui::CentralPanel::default().show(ctx, |ui| {
             // Waveform display
-            // Plot::new("waveform")
-            //     .height(200.0)
-            //     .show(ui, |plot_ui| {
-            //         let points: PlotPoints = (0..100)
-            //             .map(|i| {
-            //                 let x = i as f64 / 10.0;
-            //                 [x, (x * 5.0).sin()]
-            //             })
-            //             .collect();
-            //         plot_ui.line(Line::new(points));
-            //     });
+            Plot::new("waveform")
+                .height(200.0)
+                .show(ui,
+                    |plot_ui| {
+                    let points: PlotPoints = (0..100)
+                        .map(|i| {
+                            let x = i as f64 / 10.0;
+                            [x, (x * 5.0).sin()]
+                        })
+                        .collect();
+                    plot_ui.line(Line::new(points));
+                });
             
             // Piano roll or timeline
             ui.separator();
@@ -78,6 +79,7 @@ impl eframe::App for DAWApp {
         });
     }
 }
+
 
 fn main() -> Result<(), eframe::Error> {
     let options = eframe::NativeOptions {
@@ -88,6 +90,6 @@ fn main() -> Result<(), eframe::Error> {
     eframe::run_native(
         "Audio Composer",
         options,
-        Box::new(|_cc| Box::new(DAWApp::default())),
+        Box::new(|_cc| Ok(Box::new(DAWApp::default()))),
     )
 }
