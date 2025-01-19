@@ -9,7 +9,7 @@ const WHITE_KEY_HEIGHT: f32 = 160.0;
 const BLACK_KEY_WIDTH: f32 = 0.6 * WHITE_KEY_WIDTH;
 const BLACK_KEY_HEIGHT: f32 = 100.0;
 
-// Offsets for black keys relative to the white keys
+// Offsets for black keys relative to the previous black key
 const BLACK_KEY_OFFSETS: [f32; 5] = [
     WHITE_KEY_WIDTH - BLACK_KEY_WIDTH * 0.5, // C#
     WHITE_KEY_WIDTH - BLACK_KEY_WIDTH,       // D#
@@ -48,12 +48,10 @@ impl DAWApp {
                         }
                     });
 
-                    // TODO Fix outline color and alignment
-
                     // Black keys (overlaid on white keys)
                     ui.allocate_new_ui(
                         egui::UiBuilder::new().max_rect(egui::Rect::from_min_size(
-                            ui.min_rect().min,
+                            egui::pos2(ui.min_rect().min.x, ui.min_rect().min.y - 1.0), // Move up by 1 pixel
                             egui::vec2(available_width, BLACK_KEY_HEIGHT),
                         )),
                         |ui| {
@@ -72,7 +70,6 @@ impl DAWApp {
                                         )
                                         .min_size(egui::vec2(BLACK_KEY_WIDTH, BLACK_KEY_HEIGHT))
                                         .fill(egui::Color32::BLACK)
-                                        .stroke(egui::Stroke::new(1.0, egui::Color32::WHITE)),
                                     );
 
                                     if response.clicked() {
