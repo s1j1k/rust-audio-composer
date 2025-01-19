@@ -12,10 +12,10 @@ const BLACK_KEY_HEIGHT: f32 = 100.0;
 // Offsets for black keys relative to the white keys
 const BLACK_KEY_OFFSETS: [f32; 5] = [
     WHITE_KEY_WIDTH - BLACK_KEY_WIDTH * 0.5, // C#
-    WHITE_KEY_WIDTH - BLACK_KEY_WIDTH, // D#
+    WHITE_KEY_WIDTH - BLACK_KEY_WIDTH,       // D#
     WHITE_KEY_WIDTH * 2.0 - BLACK_KEY_WIDTH, // F#
-    WHITE_KEY_WIDTH - BLACK_KEY_WIDTH, // G#
-    WHITE_KEY_WIDTH - BLACK_KEY_WIDTH, // A#
+    WHITE_KEY_WIDTH - BLACK_KEY_WIDTH,       // G#
+    WHITE_KEY_WIDTH - BLACK_KEY_WIDTH,       // A#
 ];
 
 impl DAWApp {
@@ -48,12 +48,14 @@ impl DAWApp {
                         }
                     });
 
+                    // TODO Fix outline color and alignment
+
                     // Black keys (overlaid on white keys)
-                    ui.allocate_ui_at_rect(
-                        egui::Rect::from_min_size(
+                    ui.allocate_new_ui(
+                        egui::UiBuilder::new().max_rect(egui::Rect::from_min_size(
                             ui.min_rect().min,
                             egui::vec2(available_width, BLACK_KEY_HEIGHT),
-                        ),
+                        )),
                         |ui| {
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 0.0; // No spacing
@@ -66,8 +68,7 @@ impl DAWApp {
                                     // Add black key button
                                     let response = ui.add(
                                         egui::Button::new(
-                                            egui::RichText::new(*note)
-                                                .color(egui::Color32::WHITE), // White text
+                                            egui::RichText::new(*note).color(egui::Color32::WHITE), // White text
                                         )
                                         .min_size(egui::vec2(BLACK_KEY_WIDTH, BLACK_KEY_HEIGHT))
                                         .fill(egui::Color32::BLACK)
