@@ -43,7 +43,13 @@ impl DAWApp {
                             );
 
                             if response.clicked() {
-                                println!("Played white note: {}", note);
+                                // TODO add this to a separate function / file
+                                // TODO allow different instruments to be selected
+                                // TODO pass this command back to another file
+                                println!("Played white note: {}", note); // TODO remove comment
+                                let frequency = note_to_frequency(*note);
+                                self.oscillator.set_frequency(frequency);
+                                // self.oscillator.play();
                             }
                         }
                     });
@@ -73,7 +79,11 @@ impl DAWApp {
                                     );
 
                                     if response.clicked() {
-                                        println!("Played black note: {}", note);
+                                        println!("Played black note: {}", note); // TODO remove
+                                        // TODO cleanup
+                                        let frequency = note_to_frequency(*note);
+                                        self.oscillator.set_frequency(frequency);
+                                        // self.oscillator.play();
                                     }
                                 }
                             });
@@ -81,5 +91,24 @@ impl DAWApp {
                     );
                 });
             });
+    }
+}
+
+// FIXME this is simplified and does not allow full range of notes
+fn note_to_frequency(note: &str) -> f32 {
+    match note {
+        "C" => 261.63,
+        "C#" => 277.18,
+        "D" => 293.66,
+        "D#" => 311.13,
+        "E" => 329.63,
+        "F" => 349.23,
+        "F#" => 369.99,
+        "G" => 392.00,
+        "G#" => 415.30,
+        "A" => 440.00,
+        "A#" => 466.16,
+        "B" => 493.88,
+        _ => 440.00, // Default to A4 if note is not recognized
     }
 }
