@@ -57,10 +57,8 @@ impl DAWApp {
                         |ui| {
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 0.0; // No spacing
-                                // let mut current_offset = 0.0;
                                 for (i, note) in BLACK_NOTES.iter().enumerate() {
-                                    let space_to_add = BLACK_KEY_OFFSETS[i];// - current_offset;
-                                    // current_offset += space_to_add;
+                                    let space_to_add = BLACK_KEY_OFFSETS[i];
 
                                     // Add space for alignment
                                     ui.add_space(space_to_add);
