@@ -1,7 +1,6 @@
 use super::super::DAWApp;
-use egui::{Align, Button, Color32, Context, RichText, Stroke, Ui};
 
-// TODO move constants to separate file / location
+// Constants for piano keys
 const WHITE_NOTES: [&str; 7] = ["C", "D", "E", "F", "G", "A", "B"];
 const BLACK_NOTES: [&str; 5] = ["C#", "D#", "F#", "G#", "A#"];
 
@@ -10,13 +9,13 @@ const WHITE_KEY_HEIGHT: f32 = 160.0;
 const BLACK_KEY_WIDTH: f32 = 0.6 * WHITE_KEY_WIDTH;
 const BLACK_KEY_HEIGHT: f32 = 100.0;
 
-const BLACK_KEY_SPACING: [f32; 5] = [
-    WHITE_KEY_WIDTH - BLACK_KEY_WIDTH / 2.0,       // C#
-    WHITE_KEY_WIDTH / 2.0 - BLACK_KEY_WIDTH / 2.0, // D#
-    // minus the previous offset + black_key_width / 2
-    WHITE_KEY_WIDTH - (WHITE_KEY_WIDTH / 2.0 - BLACK_KEY_WIDTH / 2.0) / 2.0 + BLACK_KEY_WIDTH / 2.0, // F#
-    WHITE_KEY_WIDTH / 2.0 - BLACK_KEY_WIDTH / 2.0, // G#
-    WHITE_KEY_WIDTH / 2.0 - BLACK_KEY_WIDTH / 2.0, // A#
+// Offsets for black keys relative to the white keys
+const BLACK_KEY_OFFSETS: [f32; 5] = [
+    WHITE_KEY_WIDTH - BLACK_KEY_WIDTH * 0.5, // C#
+    WHITE_KEY_WIDTH - BLACK_KEY_WIDTH, // D#
+    WHITE_KEY_WIDTH * 2.0 - BLACK_KEY_WIDTH, // F#
+    WHITE_KEY_WIDTH - BLACK_KEY_WIDTH, // G#
+    WHITE_KEY_WIDTH - BLACK_KEY_WIDTH, // A#
 ];
 
 impl DAWApp {
@@ -25,63 +24,66 @@ impl DAWApp {
             .open(&mut self.show_piano)
             .default_size([400.0, 200.0])
             .show(ctx, |ui| {
-                // Create the horizontal for white keys and adjust position
-                ui.put(
-                    egui::Rect::from_min_size(
-                        egui::pos2(0.0, 10.0), // Adjust the y value for vertical positioning
-                        egui::vec2(WHITE_KEY_WIDTH * WHITE_NOTES.len() as f32, WHITE_KEY_HEIGHT),
-                    ),
-                    |ui: &mut Ui| {
-                        ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing.x = 0.0; // Remove horizontal spacing
+                let available_width = ui.available_width();
 
-                            for (i, note) in WHITE_NOTES.iter().enumerate() {
-                                let key_response = ui.add(
-                                    egui::Button::new(
-                                        egui::RichText::new(*note)
-                                            .color(egui::Color32::from_rgb(80, 80, 80)), // Dark gray text
-                                    )
-                                    .min_size(egui::vec2(WHITE_KEY_WIDTH, WHITE_KEY_HEIGHT))
-                                    .fill(egui::Color32::WHITE)
-                                    .stroke(egui::Stroke::new(0.1, egui::Color32::LIGHT_GRAY)),
-                                );
+                // Create a vertical layout for the white and black keys
+                ui.vertical(|ui| {
+                    // White keys
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 0.0; // No spacing between keys
+                        for note in WHITE_NOTES.iter() {
+                            let response = ui.add(
+                                egui::Button::new(
+                                    egui::RichText::new(*note)
+                                        .color(egui::Color32::from_rgb(80, 80, 80)), // Dark gray text
+                                )
+                                .min_size(egui::vec2(WHITE_KEY_WIDTH, WHITE_KEY_HEIGHT))
+                                .fill(egui::Color32::WHITE)
+                                .stroke(egui::Stroke::new(1.0, egui::Color32::LIGHT_GRAY)),
+                            );
 
-                                if key_response.clicked() {
-                                    println!("Played white note: {}", note);
-                                }
+                            if response.clicked() {
+                                println!("Played white note: {}", note);
                             }
-                        })
-                        .response
-                    },
-                );
+                        }
+                    });
 
-                // Create the horizontal for black keys and adjust position
-                ui.put(
-                    egui::Rect::from_min_size(
-                        egui::pos2(0.0, 10.0), // Adjust the y value for vertical positioning (same as above)
-                        egui::vec2(BLACK_KEY_WIDTH * BLACK_NOTES.len() as f32, BLACK_KEY_HEIGHT),
-                    ),
-                    |ui: &mut Ui| {
-                        ui.horizontal(|ui| {
-                            for (i, note) in BLACK_NOTES.iter().enumerate() {
-                                // Add custom space before each black key to align it with the corresponding white key
-                                ui.add_space(BLACK_KEY_SPACING[i]);
+                    // Black keys (overlaid on white keys)
+                    ui.allocate_ui_at_rect(
+                        egui::Rect::from_min_size(
+                            ui.min_rect().min,
+                            egui::vec2(available_width, BLACK_KEY_HEIGHT),
+                        ),
+                        |ui| {
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 0.0; // No spacing
+                                // let mut current_offset = 0.0;
+                                for (i, note) in BLACK_NOTES.iter().enumerate() {
+                                    let space_to_add = BLACK_KEY_OFFSETS[i];// - current_offset;
+                                    // current_offset += space_to_add;
 
-                                let response = ui.add(
-                                    egui::Button::new(egui::RichText::new(*note))
+                                    // Add space for alignment
+                                    ui.add_space(space_to_add);
+
+                                    // Add black key button
+                                    let response = ui.add(
+                                        egui::Button::new(
+                                            egui::RichText::new(*note)
+                                                .color(egui::Color32::WHITE), // White text
+                                        )
                                         .min_size(egui::vec2(BLACK_KEY_WIDTH, BLACK_KEY_HEIGHT))
                                         .fill(egui::Color32::BLACK)
-                                        .stroke(egui::Stroke::new(0.5, egui::Color32::WHITE)),
-                                );
+                                        .stroke(egui::Stroke::new(1.0, egui::Color32::WHITE)),
+                                    );
 
-                                if response.clicked() {
-                                    println!("Played black note: {}", note);
+                                    if response.clicked() {
+                                        println!("Played black note: {}", note);
+                                    }
                                 }
-                            }
-                        })
-                        .response
-                    },
-                );
+                            });
+                        },
+                    );
+                });
             });
     }
 }
