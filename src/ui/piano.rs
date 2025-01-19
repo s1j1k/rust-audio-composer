@@ -1,5 +1,5 @@
 use super::super::DAWApp;
-use egui::{Context, Ui};
+use egui::{Align, Button, Color32, Context, RichText, Stroke, Ui};
 
 // TODO move constants to separate file / location
 const WHITE_NOTES: [&str; 7] = ["C", "D", "E", "F", "G", "A", "B"];
