@@ -18,6 +18,7 @@ const BLACK_KEY_OFFSETS: [f32; 5] = [
     WHITE_KEY_WIDTH - BLACK_KEY_WIDTH,       // A#
 ];
 
+// FIXME take oscillator as param instead?
 impl DAWApp {
     pub fn show_piano_window(&mut self, ctx: &egui::Context) {
         egui::Window::new("Virtual Piano")
@@ -47,8 +48,14 @@ impl DAWApp {
                                 // TODO allow different instruments to be selected
                                 // TODO pass this command back to another file
                                 println!("Played white note: {}", note); // TODO remove comment
-                                let frequency = note_to_frequency(*note);
-                                self.oscillator.set_frequency(frequency);
+                                // let frequency = note_to_frequency(*note);
+                                // self.oscillator.set_frequency(frequency);
+                                if let Some(freq) = note_to_frequency(*note) {
+                                    if let Ok(mut osc) = self.oscillator.lock() {
+                                        osc.set_frequency(freq);
+                                        // println!("Playing note at {} Hz", freq);
+                                    }
+                                }
                                 // self.oscillator.play();
                             }
                         }
@@ -81,9 +88,16 @@ impl DAWApp {
                                     if response.clicked() {
                                         println!("Played black note: {}", note); // TODO remove
                                         // TODO cleanup
-                                        let frequency = note_to_frequency(*note);
-                                        self.oscillator.set_frequency(frequency);
+                                        // let frequency = note_to_frequency(*note);
+                                        // self.oscillator.set_frequency(frequency);
                                         // self.oscillator.play();
+
+                                        if let Some(freq) = note_to_frequency(*note) {
+                                            if let Ok(mut osc) = self.oscillator.lock() {
+                                                osc.set_frequency(freq);
+                                                // println!("Playing note at {} Hz", freq);
+                                            }
+                                        }
                                     }
                                 }
                             });
@@ -95,20 +109,20 @@ impl DAWApp {
 }
 
 // FIXME this is simplified and does not allow full range of notes
-fn note_to_frequency(note: &str) -> f32 {
+fn note_to_frequency(note: &str) -> Option<f32> {
     match note {
-        "C" => 261.63,
-        "C#" => 277.18,
-        "D" => 293.66,
-        "D#" => 311.13,
-        "E" => 329.63,
-        "F" => 349.23,
-        "F#" => 369.99,
-        "G" => 392.00,
-        "G#" => 415.30,
-        "A" => 440.00,
-        "A#" => 466.16,
-        "B" => 493.88,
-        _ => 440.00, // Default to A4 if note is not recognized
+        "C" => Some(261.63),
+        "C#" => Some(277.18),
+        "D" => Some(293.66),
+        "D#" => Some(311.13),
+        "E" => Some(329.63),
+        "F" => Some(349.23),
+        "F#" => Some(369.99),
+        "G" => Some(392.00),
+        "G#" => Some(415.30),
+        "A" => Some(440.00),
+        "A#" => Some(466.16),
+        "B" => Some(493.88),
+        _ => None,
     }
 }

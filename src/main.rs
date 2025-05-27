@@ -13,7 +13,7 @@ struct DAWApp {
     current_track: usize,
     volume: f32,
     show_piano: bool,
-    oscillator: Oscillator,
+    oscillator: Arc<Mutex<Oscillator>>,
     audio_stream: Option<Stream>,
 }
 
@@ -24,7 +24,7 @@ impl Default for DAWApp {
             current_track: 0,
             volume: 0.8,
             show_piano: false,
-            oscillator: Oscillator::default(),
+            oscillator: Arc::new(Mutex::new(Oscillator::default())),
             audio_stream: None,
         };
 
@@ -49,7 +49,10 @@ impl eframe::App for DAWApp {
                 // TODO add functionality
                 // Stop button
                 if ui.button("⏹").clicked() {
-                    self.oscillator.stop();
+                    
+                    if let Ok(mut osc) = self.oscillator.lock() {
+                        osc.stop();
+                    }
                 }
 
                 // ui.button("⏮");
@@ -135,7 +138,8 @@ impl eframe::App for DAWApp {
     }
 }
 
-// TODO move to other file
+// TODO move to other file - part of oscillator and just return it
+// 
 impl DAWApp {
     fn setup_audio_stream(&mut self) -> Result<Stream, Box<dyn std::error::Error>> {
         let host = cpal::default_host();
@@ -146,24 +150,24 @@ impl DAWApp {
         let config = device.default_output_config()?;
         let sample_rate = config.sample_rate().0 as f32;
 
-        let oscillator = Arc::new(Mutex::new(Oscillator::new(sample_rate)));
-        let osc_clone = oscillator.clone();
+        self.oscillator = Arc::new(Mutex::new(Oscillator::new(sample_rate)));
+        let osc_clone = self.oscillator.clone();
 
         let stream = device.build_output_stream(
             &config.config(),
             move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
                 if let Ok(mut osc) = osc_clone.lock() {
                     for sample in data.iter_mut() {
-                        *sample = osc.next_sample() * 100.0; // FIXME try to multiple by volume
+                        *sample = osc.next_sample();
                     }
                 }
             },
             |err| eprintln!("Audio stream error: {}", err),
-            Some(std::time::Duration::from_secs(1000000000)), // Add timeout configuration
+            Some(std::time::Duration::from_secs(10)), // Add timeout configuration
         )?;
 
         stream.play()?;
-        Ok(stream)
+        Ok(stream) 
     }
 }
 

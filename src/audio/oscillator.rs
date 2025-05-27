@@ -14,7 +14,7 @@ impl Oscillator {
             frequency: 440.0,  // A4 note
             phase: 0.0,
             sample_rate,
-            amplitude: 1.0, // FIXME testing
+            amplitude: 0.5, // FIXME testing
             is_playing: false,
         }
     }
