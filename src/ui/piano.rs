@@ -1,4 +1,5 @@
 use super::super::DAWApp;
+use egui::Ui;
 
 // Constants for piano keys
 const WHITE_NOTES: [&str; 7] = ["C", "D", "E", "F", "G", "A", "B"];
@@ -16,6 +17,15 @@ const BLACK_KEY_OFFSETS: [f32; 5] = [
     WHITE_KEY_WIDTH * 2.0 - BLACK_KEY_WIDTH, // F#
     WHITE_KEY_WIDTH - BLACK_KEY_WIDTH,       // G#
     WHITE_KEY_WIDTH - BLACK_KEY_WIDTH,       // A#
+];
+
+// Offsets for black keys relative to the previous black key
+const BLACK_KEY_OFFSETS_REV: [f32; 5] = [
+    WHITE_KEY_WIDTH - BLACK_KEY_WIDTH * 0.5, // A#
+    WHITE_KEY_WIDTH - BLACK_KEY_WIDTH,       // G#
+    WHITE_KEY_WIDTH - BLACK_KEY_WIDTH,       // F#
+    WHITE_KEY_WIDTH * 2.0 - BLACK_KEY_WIDTH * 0.75, // D#
+    WHITE_KEY_WIDTH - BLACK_KEY_WIDTH,       // C#
 ];
 
 // FIXME take oscillator as param instead?
@@ -106,6 +116,97 @@ impl DAWApp {
                 });
             });
     }
+
+    pub fn show_piano_roll(&mut self, ui: &mut Ui) {
+        // TODO add middle C octave piano roll
+        // FIXME update so that it is vertical 
+        // FIXME manipulate an actual track and record the notes pressed to the piano roll
+        // TODO add a cursor and separate into vertical beats
+        // TODO add a section separated by beats
+        // Create a horizontal layout for the white and black keys
+
+        // FIXME change to available height
+        let available_width = ui.available_height();
+        ui.horizontal(|ui| {
+            // White keys
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing.x = 0.0; // No spacing between keys
+                for note in WHITE_NOTES.iter().rev() {
+                    let response = ui.add(
+                        egui::Button::new(
+                            // FIXME align this text to the middle
+                            egui::RichText::new(*note)
+                                .color(egui::Color32::from_rgb(80, 80, 80)), // Dark gray text
+                        )
+                        .min_size(egui::vec2(WHITE_KEY_HEIGHT, WHITE_KEY_WIDTH))
+                        .fill(egui::Color32::WHITE)
+                        .stroke(egui::Stroke::new(1.0, egui::Color32::LIGHT_GRAY)),
+                    );
+
+                    if response.clicked() {
+                        // TODO add this to a separate function / file
+                        // TODO allow different instruments to be selected
+                        // TODO pass this command back to another file
+                        println!("Played white note: {}", note); // TODO remove comment
+                        // let frequency = note_to_frequency(*note);
+                        // self.oscillator.set_frequency(frequency);
+                        if let Some(freq) = note_to_frequency(*note) {
+                            if let Ok(mut osc) = self.oscillator.lock() {
+                                osc.set_frequency(freq);
+                                // println!("Playing note at {} Hz", freq);
+                            }
+                        }
+                        // self.oscillator.play();
+                    }
+                }
+            });
+
+            // Black keys (overlaid on white keys)
+            // FIXME change to like a grid layout to make it responsive to clicks
+            ui.allocate_new_ui(
+                    egui::UiBuilder::new().max_rect(egui::Rect::from_min_size(
+                        egui::pos2(ui.min_rect().min.x, ui.min_rect().min.y - 1.0), // Move up by 1 pixel
+                        egui::vec2(available_width, BLACK_KEY_HEIGHT),
+                    )),
+                    |ui| {
+                        // NOTE builds from top to bottom
+                        ui.vertical(|ui| {
+                            ui.spacing_mut().item_spacing.x = 0.0; // No spacing
+                            for (i, note) in BLACK_NOTES.iter().rev().enumerate() {
+                                let space_to_add = BLACK_KEY_OFFSETS_REV[i];
+
+                                // Add space for alignment
+                                ui.add_space(space_to_add);
+
+                                // Add black key button
+                                let response = ui.add(
+                                    egui::Button::new(
+                                        egui::RichText::new(*note).color(egui::Color32::WHITE), // White text
+                                    )
+                                    .min_size(egui::vec2(BLACK_KEY_HEIGHT, BLACK_KEY_WIDTH))
+                                    .fill(egui::Color32::BLACK)
+                                );
+
+                                if response.clicked() {
+                                    println!("Played black note: {}", note); // TODO remove
+                                    // TODO cleanup
+                                    // let frequency = note_to_frequency(*note);
+                                    // self.oscillator.set_frequency(frequency);
+                                    // self.oscillator.play();
+
+                                    if let Some(freq) = note_to_frequency(*note) {
+                                        if let Ok(mut osc) = self.oscillator.lock() {
+                                            osc.set_frequency(freq);
+                                            // println!("Playing note at {} Hz", freq);
+                                        }
+                                    }
+                                }
+                            }
+                        });
+                    })
+        });
+    }
+
 }
 
 // FIXME this is simplified and does not allow full range of notes

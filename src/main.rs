@@ -133,7 +133,9 @@ impl eframe::App for DAWApp {
             // Piano roll or timeline
             ui.separator();
             ui.heading("Piano Roll");
-            // Add piano roll implementation
+            // TODO Add piano roll implementation
+            self.show_piano_roll(ui);
+           
         });
     }
 }
