@@ -5,6 +5,8 @@ use egui::Ui;
 const WHITE_NOTES: [&str; 7] = ["C", "D", "E", "F", "G", "A", "B"];
 const BLACK_NOTES: [&str; 5] = ["C#", "D#", "F#", "G#", "A#"];
 
+const ALL_NOTES: [&str; 12] = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+
 const WHITE_KEY_WIDTH: f32 = 40.0;
 const WHITE_KEY_HEIGHT: f32 = 160.0;
 const BLACK_KEY_WIDTH: f32 = 0.6 * WHITE_KEY_WIDTH;
@@ -203,7 +205,49 @@ impl DAWApp {
                                 }
                             }
                         });
-                    })
+                    });
+        
+            // TODO enclose this and piano roll with a vertical bar showing which beat we're up to 
+            // FIXME add this
+            // This is the Track Editor part
+            // vertical bars for each semitone
+            ui.vertical(|ui| {
+                for note in WHITE_NOTES.iter().rev() {
+                    // Add a full width horizontal bar 
+                    // TODO make it different color for sharps/natural notes
+                    let response = ui.add(
+                        egui::Button::new(
+                            // FIXME align this text to the middle
+                            // FIXME remove text on this part
+                            egui::RichText::new(*note)
+                                .color(egui::Color32::from_rgb(80, 80, 80)), // Dark gray text
+                        )
+                        // FIXME set the width to the width of the window it's contained in
+                        .min_size(egui::vec2(100.0, WHITE_KEY_WIDTH * 0.5))
+                        .fill(egui::Color32::DARK_GRAY)
+                        .stroke(egui::Stroke::new(1.0, egui::Color32::LIGHT_GRAY)),
+                    );
+
+                    if response.clicked() {
+                        // TODO add this to a separate function / file
+                        // TODO allow different instruments to be selected
+                        // TODO pass this command back to another file
+                        println!("Played note: {}", note); // TODO remove comment
+                        if let Some(freq) = note_to_frequency(*note) {
+                            if let Ok(mut osc) = self.oscillator.lock() {
+                                osc.set_frequency(freq);
+                            }
+                        }
+                    }
+
+                    // TODO control onclick action - play note based on duration
+                    // TODO add default duration
+                    
+                 }
+            });
+
+            // TODO overlay transparent vertical lines to indicate the beats
+        
         });
     }
 
