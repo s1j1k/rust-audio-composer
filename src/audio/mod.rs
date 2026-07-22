@@ -1,1 +1,4 @@
-pub mod oscillator;
+pub mod engine;
+pub mod synth;
+
+pub use engine::AudioEngine;

@@ -1,0 +1,82 @@
+use crate::app::DAWApp;
+use egui::Ui;
+
+pub fn show_transport(app: &mut DAWApp, ui: &mut Ui) {
+    ui.horizontal(|ui| {
+        if ui
+            .button(if app.playing { "⏸ Pause" } else { "▶ Play" })
+            .clicked()
+        {
+            app.toggle_playback();
+        }
+
+        if ui.button("⏹ Stop").clicked() {
+            app.stop_playback();
+        }
+
+        let record_label = if app.recording {
+            "⏺ Recording"
+        } else {
+            "⏺ Record"
+        };
+        if ui
+            .selectable_label(app.recording, record_label)
+            .clicked()
+        {
+            app.recording = !app.recording;
+        }
+
+        if ui
+            .selectable_label(app.show_piano, "🎹 Piano")
+            .clicked()
+        {
+            app.show_piano = !app.show_piano;
+        }
+
+        if ui
+            .selectable_label(app.show_composition, "🎼 Compose")
+            .clicked()
+        {
+            app.show_composition = !app.show_composition;
+        }
+
+        if ui
+            .selectable_label(app.show_instrument_designer, "✨ AI Instrument")
+            .clicked()
+        {
+            app.show_instrument_designer = !app.show_instrument_designer;
+        }
+
+        ui.separator();
+
+        ui.label("BPM:");
+        if ui
+            .add(egui::Slider::new(&mut app.project.bpm, 40.0..=240.0).fixed_decimals(0))
+            .changed()
+        {
+            app.project.bpm = app.project.bpm.round();
+        }
+
+        ui.separator();
+
+        ui.label("Time Sig:");
+        ui.add(egui::DragValue::new(&mut app.project.time_sig_numerator).range(1..=12));
+        ui.label("/");
+        let mut denom = app.project.time_sig_denominator as i32;
+        egui::ComboBox::from_id_salt("time_sig_denom")
+            .selected_text(format!("{}", app.project.time_sig_denominator))
+            .show_ui(ui, |ui| {
+                for d in [2, 4, 8, 16] {
+                    ui.selectable_value(&mut denom, d, format!("{}", d));
+                }
+            });
+        app.project.time_sig_denominator = denom as u8;
+
+        ui.separator();
+
+        ui.label(format!(
+            "Beat: {:.1} / {:.0}",
+            app.project.playhead_beat, app.project.total_beats
+        ));
+    });
+}
