@@ -1,6 +1,7 @@
 use super::{instrument::InstrumentId, note::Note};
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Track {
     pub name: String,
     pub instrument: InstrumentId,

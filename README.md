@@ -10,20 +10,26 @@ A desktop Digital Audio Workstation (DAW) built in Rust with egui. Play piano an
 - Polyphonic playback with ADSR envelopes
 
 ### Instruments
-Built-in presets:
-- **Piano** — triangle wave with natural decay
-- **Guitar** — plucked string character
-- **Bass** — warm saw wave
-- **Strings** — slow-attack pad
+Built-in sample-based presets (generated on first run, cached as WAV in `~/.rust-audio-composer/samples/`):
+- **Piano**, **Guitar**, **Bass**, **Strings**, **Flute**, **Brass**, **Organ**, **Pad**
 
-Each track can have its own instrument.
+Each uses a distinct waveform sample (Karplus-Strong pluck, additive piano, etc.) rather than a plain oscillator. Custom AI instruments pick a base sample and apply envelope/filter tweaks.
 
-### Piano Roll / Timeline
-- Vertical piano keys on the left (C3–B5 range)
-- Horizontal timeline with beat and bar grid lines
-- Click the grid to place notes on the selected track
-- Red playhead shows current playback position
-- Notes displayed as colored blocks per track
+### Timeline & Piano Roll
+
+The main view is split into two sections:
+
+**Timeline (top)** — one row per track:
+- Click a row to select that track
+- Click anywhere on a row's grid to set the playhead (where recording starts)
+- Notes appear as small blocks whose height reflects pitch — a high-level overview of each track's shape
+- The red vertical line is the playhead, shared across all tracks
+- Selected track is highlighted with a colored border
+
+**Piano Roll (bottom)** — detailed editor for the selected track:
+- Vertical piano keys on the left (C3–B5)
+- Full note grid with pitch-by-pitch detail
+- Click the grid to place notes, or use the virtual piano while recording
 
 ### Multi-Track
 - Add unlimited tracks via the sidebar
@@ -45,20 +51,46 @@ Each track can have its own instrument.
 - Educational collapsible section explaining the circle of fifths
 
 ### AI Instrument Designer (✨ AI Instrument)
-Describe a sound in plain language and the app generates a playable synth preset:
-- Example: *"warm mellow piano with gentle attack"*
-- Preview before saving
-- Saved instruments appear in the track instrument picker
+1. Select a **base instrument** from the library (uses its cached waveform sample)
+2. Describe how you want it to sound
+3. **Generate** → preview → **Save to Library**
+4. Saved custom instruments appear in the track instrument picker
 
-Currently uses local keyword analysis. Cloud LLM integration is planned (see TODO).
+Currently uses local keyword analysis to map descriptions onto base samples. Cloud LLM integration is planned (see TODO).
+
+### Save, Load & Export
+- **💾 Save Project** — saves all tracks, notes, BPM, time signature, and custom instruments to a `.rac.json` file
+- **📂 Load Project** — restores a saved project
+- **🎵 Export WAV** — renders the full composition to a WAV audio file
 
 ## Running
 
+From the project directory:
+
 ```bash
+cd rust-audio-composer
 cargo run
 ```
 
-Requires a working audio output device (macOS CoreAudio, etc.).
+The first build can take a minute or two; later runs are much faster.
+
+**Requirements:** a working audio output device (speakers or headphones). On macOS the app uses CoreAudio automatically.
+
+### Quick tour
+
+Once the app opens:
+
+| Button | What it does |
+|--------|--------------|
+| **🎹 Piano** | Open the virtual keyboard to play notes |
+| **⏺ Record** | Record what you play onto the selected track |
+| **▶ Play** | Play back your composition |
+| **🎼 Compose** | Key detection, chord suggestions, circle of fifths |
+| **✨ AI Instrument** | Create custom instruments from text descriptions |
+
+Select a track in the timeline rows, click to set the playhead, enable **⏺ Record**, then play on the piano to capture a section.
+
+If you hit a compile error or no sound, check the terminal output for errors and ensure your audio device is connected and not muted.
 
 ## Project Structure
 

@@ -1,95 +1,97 @@
 use crate::app::DAWApp;
 use crate::music::theory::{is_black_key, pitch_to_name};
-use egui::{Color32, Key, Vec2};
+use egui::{Color32, Key, Rect, Sense, Ui, Vec2};
 
-const WHITE_KEY_WIDTH: f32 = 32.0;
-const WHITE_KEY_HEIGHT: f32 = 120.0;
-const BLACK_KEY_WIDTH: f32 = 20.0;
-const BLACK_KEY_HEIGHT: f32 = 72.0;
-const BLACK_KEY_OFFSETS: [f32; 5] = [
-    WHITE_KEY_WIDTH - BLACK_KEY_WIDTH * 0.5,
-    WHITE_KEY_WIDTH - BLACK_KEY_WIDTH,
-    WHITE_KEY_WIDTH * 2.0 - BLACK_KEY_WIDTH,
-    WHITE_KEY_WIDTH - BLACK_KEY_WIDTH,
-    WHITE_KEY_WIDTH - BLACK_KEY_WIDTH,
-];
+const WHITE_KEY_WIDTH: f32 = 40.0;
+const WHITE_KEY_HEIGHT: f32 = 160.0;
+const BLACK_KEY_WIDTH: f32 = WHITE_KEY_WIDTH * 0.6;
+const BLACK_KEY_HEIGHT: f32 = 100.0;
 
 const PIANO_START: u8 = 48;
 const PIANO_END: u8 = 72;
-const BLACK_NOTES: [u8; 5] = [49, 51, 54, 56, 58];
+
+fn white_key_has_sharp(pitch: u8) -> bool {
+    matches!(pitch % 12, 0 | 2 | 5 | 7 | 9)
+}
 
 pub fn show_piano_window(app: &mut DAWApp, ctx: &egui::Context) {
     let mut show = app.show_piano;
     egui::Window::new("Virtual Piano")
         .open(&mut show)
-        .default_size([520.0, 200.0])
+        .default_size([560.0, 220.0])
         .show(ctx, |ui| {
-            ui.label("Click keys or use your keyboard (Z-M = white keys, S/D/G/H/J = black keys).");
+            ui.label("Click keys or use keyboard: Z-M = white keys, S/D/G/H/J = black keys.");
             ui.label(format!("Instrument: {}", app.current_instrument_name()));
 
             let white_pitches: Vec<u8> = (PIANO_START..=PIANO_END)
                 .filter(|p| !is_black_key(*p))
                 .collect();
-
             let total_width = white_pitches.len() as f32 * WHITE_KEY_WIDTH;
 
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 0.0;
-                for pitch in &white_pitches {
-                    let pressed = app.held_notes.contains(pitch);
-                    let fill = if pressed {
-                        Color32::from_rgb(180, 200, 255)
-                    } else {
-                        Color32::WHITE
-                    };
+            let (area, _) =
+                ui.allocate_exact_size(Vec2::new(total_width, WHITE_KEY_HEIGHT + 8.0), Sense::click());
+            let painter = ui.painter_at(area);
+            let origin = area.min;
 
-                    let response = ui.add(
-                        egui::Button::new(pitch_to_name(*pitch))
-                            .min_size(Vec2::new(WHITE_KEY_WIDTH, WHITE_KEY_HEIGHT))
-                            .fill(fill)
-                            .stroke(egui::Stroke::new(1.0, Color32::GRAY)),
-                    );
+            let mut x = origin.x;
+            for &wp in &white_pitches {
+                let key_rect = Rect::from_min_size(
+                    egui::pos2(x, origin.y),
+                    Vec2::new(WHITE_KEY_WIDTH, WHITE_KEY_HEIGHT),
+                );
+                let pressed = app.held_notes.contains(&wp);
+                let fill = if pressed {
+                    Color32::from_rgb(180, 200, 255)
+                } else {
+                    Color32::WHITE
+                };
+                painter.rect_filled(key_rect, 2.0, fill);
+                painter.rect_stroke(key_rect, 2.0, egui::Stroke::new(1.0, Color32::GRAY));
+                painter.text(
+                    key_rect.center_bottom() - Vec2::new(0.0, 10.0),
+                    egui::Align2::CENTER_BOTTOM,
+                    pitch_to_name(wp),
+                    egui::FontId::proportional(10.0),
+                    Color32::DARK_GRAY,
+                );
 
-                    if response.is_pointer_button_down_on() {
-                        app.play_note(*pitch);
-                    } else if app.held_notes.contains(pitch) {
-                        app.release_note(*pitch);
+                let response = ui.interact(key_rect, ui.id().with(("w", wp)), Sense::click());
+                if response.is_pointer_button_down_on() {
+                    app.play_note(wp);
+                } else if app.held_notes.contains(&wp) {
+                    app.release_note(wp);
+                }
+                x += WHITE_KEY_WIDTH;
+            }
+
+            x = origin.x;
+            for &wp in &white_pitches {
+                if white_key_has_sharp(wp) {
+                    let bp = wp + 1;
+                    if bp <= PIANO_END {
+                        let bx = x + WHITE_KEY_WIDTH - BLACK_KEY_WIDTH * 0.5;
+                        let key_rect = Rect::from_min_size(
+                            egui::pos2(bx, origin.y),
+                            Vec2::new(BLACK_KEY_WIDTH, BLACK_KEY_HEIGHT),
+                        );
+                        let pressed = app.held_notes.contains(&bp);
+                        let fill = if pressed {
+                            Color32::from_rgb(80, 80, 120)
+                        } else {
+                            Color32::BLACK
+                        };
+                        painter.rect_filled(key_rect, 2.0, fill);
+
+                        let response = ui.interact(key_rect, ui.id().with(("b", bp)), Sense::click());
+                        if response.is_pointer_button_down_on() {
+                            app.play_note(bp);
+                        } else if app.held_notes.contains(&bp) {
+                            app.release_note(bp);
+                        }
                     }
                 }
-            });
-
-            ui.allocate_new_ui(
-                egui::UiBuilder::new().max_rect(egui::Rect::from_min_size(
-                    egui::pos2(ui.min_rect().min.x, ui.min_rect().min.y - BLACK_KEY_HEIGHT),
-                    egui::vec2(total_width, BLACK_KEY_HEIGHT),
-                )),
-                |ui| {
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = 0.0;
-                        for (i, pitch) in BLACK_NOTES.iter().enumerate() {
-                            ui.add_space(BLACK_KEY_OFFSETS[i]);
-                            let pressed = app.held_notes.contains(pitch);
-                            let fill = if pressed {
-                                Color32::from_rgb(80, 80, 120)
-                            } else {
-                                Color32::BLACK
-                            };
-
-                            let response = ui.add(
-                                egui::Button::new("")
-                                    .min_size(Vec2::new(BLACK_KEY_WIDTH, BLACK_KEY_HEIGHT))
-                                    .fill(fill),
-                            );
-
-                            if response.is_pointer_button_down_on() {
-                                app.play_note(*pitch);
-                            } else if app.held_notes.contains(pitch) {
-                                app.release_note(*pitch);
-                            }
-                        }
-                    });
-                },
-            );
+                x += WHITE_KEY_WIDTH;
+            }
 
             handle_keyboard_input(app, ctx);
         });

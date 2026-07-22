@@ -1,6 +1,7 @@
+use crate::audio::export::export_project_wav;
 use crate::audio::AudioEngine;
-use crate::model::instrument::{CustomInstrument, InstrumentId, InstrumentPreset};
-use crate::model::{Note, Project};
+use crate::model::instrument::{CustomInstrument, InstrumentId, InstrumentProfile, SampleKind};
+use crate::model::{Note, Project, SavedProject};
 use crate::music::Key;
 use crate::music::theory::NOTE_NAMES;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -38,6 +39,10 @@ pub struct DAWApp {
     pub custom_instruments: Vec<CustomInstrument>,
 
     pub selected_instrument: String,
+    pub ai_base_kind: SampleKind,
+    pub status_message: Option<String>,
+    pub status_error: Option<String>,
+    pub project_file_path: Option<String>,
 }
 
 impl Default for DAWApp {
@@ -73,6 +78,10 @@ impl Default for DAWApp {
             custom_instruments: Vec::new(),
 
             selected_instrument: "Piano".to_string(),
+            ai_base_kind: SampleKind::Piano,
+            status_message: None,
+            status_error: None,
+            project_file_path: None,
         };
 
         if let Ok(stream) = app.setup_audio_stream() {
@@ -116,18 +125,12 @@ impl DAWApp {
 
     pub fn sync_instrument_to_track(&mut self) {
         if let Some(track) = self.project.tracks.get(self.current_track) {
-            let name = match &track.instrument {
-                InstrumentId::Piano => "Piano".to_string(),
-                InstrumentId::Guitar => "Guitar".to_string(),
-                InstrumentId::Bass => "Bass".to_string(),
-                InstrumentId::Strings => "Strings".to_string(),
-                InstrumentId::Custom(n) => n.clone(),
-            };
+            let name = track.instrument.label();
             self.selected_instrument = name.clone();
             if let Ok(mut eng) = self.audio_engine.lock() {
-                eng.set_preset(&name);
+                eng.set_profile(&name);
             }
-            self.audio.set_preset(&name);
+            self.audio.set_profile(&name);
         }
     }
 
@@ -165,7 +168,20 @@ impl DAWApp {
         if let Some(track) = self.project.tracks.get_mut(self.current_track) {
             track.add_note(note);
         }
-        self.play_note(pitch);
+        if let Ok(mut eng) = self.audio_engine.lock() {
+            eng.play_note(pitch, 0.8);
+        }
+    }
+
+    pub fn select_track(&mut self, index: usize) {
+        if index < self.project.tracks.len() {
+            self.current_track = index;
+            self.sync_instrument_to_track();
+        }
+    }
+
+    pub fn set_playhead(&mut self, beat: f64) {
+        self.project.playhead_beat = beat.clamp(0.0, self.project.total_beats);
     }
 
     pub fn toggle_playback(&mut self) {
@@ -225,7 +241,7 @@ impl DAWApp {
                 {
                     if let Ok(mut eng) = self.audio_engine.lock() {
                         let inst_name = track.instrument.label();
-                        eng.set_preset(&inst_name);
+                        eng.set_profile(&inst_name);
                         eng.play_note(note.pitch, note.velocity);
                     }
                     self.playback_notes_active.insert(note.pitch);
@@ -242,27 +258,57 @@ impl DAWApp {
     }
 
     pub fn save_custom_instrument(&mut self, custom: CustomInstrument) {
-        let preset = InstrumentPreset::Custom(custom.clone());
+        let profile = InstrumentProfile::from_custom(&custom);
         let name = custom.name.clone();
         self.custom_instruments.push(custom);
         if let Ok(mut eng) = self.audio_engine.lock() {
-            eng.add_custom_instrument(preset.clone());
+            eng.add_profile(profile.clone());
         }
-        self.audio.add_custom_instrument(preset);
+        self.audio.add_profile(profile);
         self.select_custom_instrument(&name);
         self.pending_custom_instrument = None;
         self.instrument_name_input.clear();
+        self.status_message = Some(format!("Added \"{}\" to instrument library", name));
+        self.status_error = None;
     }
 
     pub fn preview_custom_instrument(&mut self) {
         if let Some(custom) = &self.pending_custom_instrument {
-            let preset = InstrumentPreset::Custom(custom.clone());
+            let profile = InstrumentProfile::from_custom(custom);
             if let Ok(mut eng) = self.audio_engine.lock() {
-                eng.add_custom_instrument(preset.clone());
-                eng.set_preset(&custom.name);
+                eng.add_profile(profile.clone());
+                eng.set_profile(&custom.name);
                 eng.play_note(60, 0.8);
             }
         }
+    }
+
+    pub fn preview_base_instrument(&mut self) {
+        let name = self.ai_base_kind.label();
+        if let Ok(mut eng) = self.audio_engine.lock() {
+            eng.set_profile(name);
+            eng.play_note(60, 0.8);
+        }
+    }
+
+    pub fn preview_builtin(&mut self, kind: SampleKind) {
+        let name = kind.label();
+        if let Ok(mut eng) = self.audio_engine.lock() {
+            eng.set_profile(name);
+            eng.play_note(60, 0.8);
+        }
+    }
+
+    pub fn select_builtin_instrument(&mut self, kind: SampleKind) {
+        let name = kind.label();
+        self.selected_instrument = name.to_string();
+        if let Some(track) = self.project.tracks.get_mut(self.current_track) {
+            track.instrument = InstrumentId::from_sample_kind(kind);
+        }
+        if let Ok(mut eng) = self.audio_engine.lock() {
+            eng.set_profile(name);
+        }
+        self.audio.set_profile(name);
     }
 
     pub fn select_custom_instrument(&mut self, name: &str) {
@@ -271,9 +317,99 @@ impl DAWApp {
             track.instrument = InstrumentId::Custom(name.to_string());
         }
         if let Ok(mut eng) = self.audio_engine.lock() {
-            eng.set_preset(name);
+            eng.set_profile(name);
         }
-        self.audio.set_preset(name);
+        self.audio.set_profile(name);
+    }
+
+    pub fn save_project_dialog(&mut self) {
+        self.status_error = None;
+        let path = rfd::FileDialog::new()
+            .add_filter("Rust Audio Composer", &["rac.json", "json"])
+            .set_file_name("my-song.rac.json")
+            .save_file();
+        if let Some(path) = path {
+            let saved = SavedProject::from_app(
+                self.project.clone(),
+                self.custom_instruments.clone(),
+                self.audio.master_volume,
+            );
+            match saved.save_to_path(&path) {
+                Ok(()) => {
+                    self.project_file_path = Some(path.display().to_string());
+                    self.status_message = Some(format!("Saved project to {}", path.display()));
+                }
+                Err(e) => self.status_error = Some(e),
+            }
+        }
+    }
+
+    pub fn load_project_dialog(&mut self) {
+        self.status_error = None;
+        if let Some(path) = rfd::FileDialog::new()
+            .add_filter("Rust Audio Composer", &["rac.json", "json"])
+            .pick_file()
+        {
+            match SavedProject::load_from_path(&path) {
+                Ok(saved) => {
+                    self.apply_saved_project(saved);
+                    self.project_file_path = Some(path.display().to_string());
+                    self.status_message = Some(format!("Loaded project from {}", path.display()));
+                }
+                Err(e) => self.status_error = Some(e),
+            }
+        }
+    }
+
+    pub fn export_wav_dialog(&mut self) {
+        self.status_error = None;
+        if let Some(path) = rfd::FileDialog::new()
+            .add_filter("WAV Audio", &["wav"])
+            .set_file_name("export.wav")
+            .save_file()
+        {
+            let sr = self.audio.sample_rate();
+            match export_project_wav(
+                &self.project,
+                &self.custom_instruments,
+                &path,
+                sr,
+                self.audio.master_volume,
+            ) {
+                Ok(()) => {
+                    self.status_message = Some(format!("Exported audio to {}", path.display()))
+                }
+                Err(e) => self.status_error = Some(e),
+            }
+        }
+    }
+
+    fn apply_saved_project(&mut self, saved: SavedProject) {
+        self.project = saved.project;
+        self.custom_instruments = saved.custom_instruments;
+        self.audio.master_volume = saved.master_volume;
+        self.current_track = 0;
+        if self.current_track >= self.project.tracks.len() && !self.project.tracks.is_empty() {
+            self.current_track = self.project.tracks.len() - 1;
+        }
+
+        if let Ok(mut eng) = self.audio_engine.lock() {
+            eng.master_volume = saved.master_volume;
+            for profile in crate::model::instrument::default_profiles() {
+                eng.add_profile(profile);
+            }
+            for custom in &self.custom_instruments {
+                eng.add_profile(InstrumentProfile::from_custom(custom));
+            }
+        }
+        for profile in crate::model::instrument::default_profiles() {
+            self.audio.add_profile(profile);
+        }
+        for custom in &self.custom_instruments.clone() {
+            self.audio.add_profile(InstrumentProfile::from_custom(custom));
+        }
+        self.sync_instrument_to_track();
+        self.stop_playback();
     }
 
     pub fn insert_chord_from_roman(&mut self, roman: &str, key: &Key) {
@@ -351,10 +487,22 @@ impl eframe::App for DAWApp {
         self.show_piano_window(ctx);
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading("Timeline");
-            crate::ui::show_piano_roll(self, ui);
+            ui.vertical(|ui| {
+                show_timeline_section(self, ui);
+                ui.separator();
+                crate::ui::show_piano_roll_detail(self, ui);
+            });
         });
     }
+}
+
+fn show_timeline_section(app: &mut DAWApp, ui: &mut egui::Ui) {
+    let available = ui.available_height() - crate::ui::constants::PIANO_ROLL_PANEL_HEIGHT - 20.0;
+    egui::ScrollArea::vertical()
+        .max_height(available.max(120.0))
+        .show(ui, |ui| {
+            crate::ui::show_multi_track_timeline(app, ui);
+        });
 }
 
 impl DAWApp {

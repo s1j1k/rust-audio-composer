@@ -1,7 +1,10 @@
-use crate::model::instrument::{SynthParams, Waveform};
+use crate::audio::samples::{InstrumentSample, SampleLibrary};
+use crate::model::instrument::SynthParams;
+use crate::music::theory::midi_to_frequency;
 use std::f32::consts::PI;
+use std::sync::Arc;
 
-const MAX_VOICES: usize = 16;
+const MAX_VOICES: usize = 24;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum EnvelopePhase {
@@ -12,40 +15,52 @@ enum EnvelopePhase {
     Release,
 }
 
-pub struct Voice {
-    frequency: f32,
-    phase: f32,
-    phase2: f32,
+struct Voice {
+    sample: Arc<Vec<f32>>,
+    root_freq: f32,
+    playback_rate: f32,
+    sample_pos: f32,
     amplitude: f32,
     params: SynthParams,
     envelope_phase: EnvelopePhase,
     envelope_level: f32,
     sample_rate: f32,
-    age: f32,
+    filter_state: f32,
 }
 
 impl Voice {
     fn new(sample_rate: f32) -> Self {
         Self {
-            frequency: 440.0,
-            phase: 0.0,
-            phase2: 0.0,
+            sample: Arc::new(Vec::new()),
+            root_freq: 440.0,
+            playback_rate: 1.0,
+            sample_pos: 0.0,
             amplitude: 0.0,
             params: SynthParams::default(),
             envelope_phase: EnvelopePhase::Idle,
             envelope_level: 0.0,
             sample_rate,
-            age: 0.0,
+            filter_state: 0.0,
         }
     }
 
-    fn trigger(&mut self, frequency: f32, velocity: f32, params: SynthParams) {
-        self.frequency = frequency;
+    fn trigger(
+        &mut self,
+        pitch: u8,
+        velocity: f32,
+        params: SynthParams,
+        instrument_sample: &InstrumentSample,
+    ) {
+        let target_freq = midi_to_frequency(pitch);
+        self.sample = instrument_sample.data.clone();
+        self.root_freq = instrument_sample.root_freq;
+        self.playback_rate = target_freq / self.root_freq * (1.0 + params.detune);
+        self.sample_pos = 0.0;
         self.amplitude = velocity.clamp(0.0, 1.0);
         self.params = params;
         self.envelope_phase = EnvelopePhase::Attack;
         self.envelope_level = 0.0;
-        self.age = 0.0;
+        self.filter_state = 0.0;
     }
 
     fn release(&mut self) {
@@ -58,16 +73,18 @@ impl Voice {
         self.envelope_phase != EnvelopePhase::Idle
     }
 
-    fn waveform_sample(phase: f32, waveform: Waveform) -> f32 {
-        match waveform {
-            Waveform::Sine => (phase * 2.0 * PI).sin(),
-            Waveform::Triangle => {
-                let t = phase % 1.0;
-                if t < 0.5 { 4.0 * t - 1.0 } else { 3.0 - 4.0 * t }
-            }
-            Waveform::Square => if phase % 1.0 < 0.5 { 1.0 } else { -1.0 },
-            Waveform::Saw => 2.0 * (phase % 1.0) - 1.0,
+    fn sample_at(&self, pos: f32) -> f32 {
+        if self.sample.is_empty() {
+            return 0.0;
         }
+        let idx = pos as usize;
+        if idx >= self.sample.len() {
+            return 0.0;
+        }
+        let frac = pos - idx as f32;
+        let s0 = self.sample[idx];
+        let s1 = self.sample.get(idx + 1).copied().unwrap_or(0.0);
+        s0 + (s1 - s0) * frac
     }
 
     fn next_sample(&mut self) -> f32 {
@@ -76,33 +93,16 @@ impl Voice {
         }
 
         let dt = 1.0 / self.sample_rate;
-        self.age += dt;
-
         self.envelope_level = match self.envelope_phase {
             EnvelopePhase::Attack => {
-                let rate = if self.params.attack > 0.0 {
-                    dt / self.params.attack
-                } else {
-                    1.0
-                };
-                self.envelope_level + rate
+                self.envelope_level + dt / self.params.attack.max(0.001)
             }
             EnvelopePhase::Decay => {
-                let rate = if self.params.decay > 0.0 {
-                    dt / self.params.decay
-                } else {
-                    1.0
-                };
-                self.envelope_level - rate * (1.0 - self.params.sustain)
+                self.envelope_level - dt / self.params.decay.max(0.001) * (1.0 - self.params.sustain)
             }
             EnvelopePhase::Sustain => self.params.sustain,
             EnvelopePhase::Release => {
-                let rate = if self.params.release > 0.0 {
-                    dt / self.params.release
-                } else {
-                    1.0
-                };
-                self.envelope_level - rate
+                self.envelope_level - dt / self.params.release.max(0.001)
             }
             EnvelopePhase::Idle => 0.0,
         };
@@ -116,28 +116,37 @@ impl Voice {
             self.envelope_phase = EnvelopePhase::Sustain;
         }
         if self.envelope_phase == EnvelopePhase::Release && self.envelope_level <= 0.0 {
-            self.envelope_level = 0.0;
             self.envelope_phase = EnvelopePhase::Idle;
             return 0.0;
         }
 
-        let detune_freq = self.frequency * (1.0 + self.params.detune);
-        let s1 = Self::waveform_sample(self.phase, self.params.waveform);
-        let s2 = Self::waveform_sample(self.phase2, self.params.waveform);
-        let mix = s1 * (1.0 - self.params.brightness * 0.3) + s2 * self.params.brightness * 0.3;
+        let raw = self.sample_at(self.sample_pos);
+        self.sample_pos += self.playback_rate;
 
-        self.phase += self.frequency / self.sample_rate;
-        self.phase2 += detune_freq / self.sample_rate;
-        if self.phase >= 1.0 { self.phase -= 1.0; }
-        if self.phase2 >= 1.0 { self.phase2 -= 1.0; }
+        let cutoff = self.params.filter_cutoff.clamp(0.05, 1.0);
+        let alpha = cutoff * 0.35;
+        self.filter_state += alpha * (raw - self.filter_state);
+        let filtered = raw * (1.0 - cutoff * 0.5) + self.filter_state * (cutoff * 0.5);
 
-        mix * self.envelope_level * self.amplitude * 0.3
+        let bright = self.params.brightness.clamp(0.0, 1.0);
+        let harmonic =
+            (self.sample_pos * self.root_freq / self.sample_rate * 2.0 * PI).sin() * bright * 0.15;
+        let mixed = filtered * (1.0 - bright * 0.15) + harmonic;
+
+        if self.sample_pos as usize >= self.sample.len()
+            && self.envelope_phase == EnvelopePhase::Sustain
+        {
+            self.envelope_phase = EnvelopePhase::Release;
+        }
+
+        mixed * self.envelope_level * self.amplitude * 0.55
     }
 }
 
 pub struct SynthEngine {
     voices: Vec<Voice>,
     sample_rate: f32,
+    library: SampleLibrary,
 }
 
 impl SynthEngine {
@@ -145,23 +154,31 @@ impl SynthEngine {
         Self {
             voices: (0..MAX_VOICES).map(|_| Voice::new(sample_rate)).collect(),
             sample_rate,
+            library: SampleLibrary::new(sample_rate),
         }
     }
 
+    pub fn library(&self) -> &SampleLibrary {
+        &self.library
+    }
+
     pub fn note_on(&mut self, pitch: u8, velocity: f32, params: SynthParams) {
-        let freq = crate::music::theory::midi_to_frequency(pitch);
+        let sample = self.library.get(params.sample_kind);
         if let Some(voice) = self.voices.iter_mut().find(|v| !v.is_active()) {
-            voice.trigger(freq, velocity, params);
-        } else {
-            self.voices[0].trigger(freq, velocity, params);
+            voice.trigger(pitch, velocity, params, sample);
+        } else if let Some(voice) = self.voices.first_mut() {
+            voice.trigger(pitch, velocity, params, sample);
         }
     }
 
     pub fn note_off(&mut self, pitch: u8) {
-        let freq = crate::music::theory::midi_to_frequency(pitch);
+        let freq = midi_to_frequency(pitch);
         for voice in &mut self.voices {
-            if voice.is_active() && (voice.frequency - freq).abs() < 0.5 {
-                voice.release();
+            if voice.is_active() {
+                let voice_freq = voice.root_freq * voice.playback_rate;
+                if (voice_freq - freq).abs() < 2.0 {
+                    voice.release();
+                }
             }
         }
     }

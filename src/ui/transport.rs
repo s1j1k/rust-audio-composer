@@ -78,5 +78,24 @@ pub fn show_transport(app: &mut DAWApp, ui: &mut Ui) {
             "Beat: {:.1} / {:.0}",
             app.project.playhead_beat, app.project.total_beats
         ));
+
+        ui.separator();
+
+        if ui.button("💾 Save Project").clicked() {
+            app.save_project_dialog();
+        }
+        if ui.button("📂 Load Project").clicked() {
+            app.load_project_dialog();
+        }
+        if ui.button("🎵 Export WAV").clicked() {
+            app.export_wav_dialog();
+        }
+
+        if let Some(ref msg) = app.status_message {
+            ui.label(egui::RichText::new(msg).color(egui::Color32::LIGHT_GREEN));
+        }
+        if let Some(ref err) = app.status_error {
+            ui.label(egui::RichText::new(err).color(egui::Color32::LIGHT_RED));
+        }
     });
 }

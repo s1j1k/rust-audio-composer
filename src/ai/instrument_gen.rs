@@ -1,55 +1,41 @@
-use crate::model::instrument::{CustomInstrument, SynthParams, Waveform};
+use crate::model::instrument::{CustomInstrument, SampleKind, SynthParams, default_params_for_kind};
 
-pub fn describe_to_instrument(description: &str, name: &str) -> CustomInstrument {
+pub fn describe_to_instrument(
+    description: &str,
+    name: &str,
+    base_kind: SampleKind,
+) -> CustomInstrument {
     let lower = description.to_lowercase();
-    let mut params = SynthParams::default();
+    let mut params = default_params_for_kind(base_kind);
 
     if lower.contains("piano") || lower.contains("keys") {
-        params.waveform = Waveform::Triangle;
-        params.attack = 0.005;
-        params.decay = 0.3;
-        params.sustain = 0.2;
-        params.release = 0.4;
-    } else if lower.contains("guitar") || lower.contains("pluck") || lower.contains("string") {
-        params.waveform = Waveform::Triangle;
-        params.attack = 0.001;
-        params.decay = 0.5;
-        params.sustain = 0.05;
-        params.release = 0.3;
-        params.detune = 0.002;
+        params.sample_kind = SampleKind::Piano;
+    } else if lower.contains("guitar") || lower.contains("pluck") {
+        params.sample_kind = SampleKind::Guitar;
     } else if lower.contains("bass") || lower.contains("deep") || lower.contains("sub") {
-        params.waveform = Waveform::Saw;
-        params.attack = 0.01;
-        params.decay = 0.2;
-        params.sustain = 0.6;
-        params.release = 0.15;
-        params.brightness = 0.2;
+        params.sample_kind = SampleKind::Bass;
+    } else if lower.contains("string") || lower.contains("violin") || lower.contains("cello") {
+        params.sample_kind = SampleKind::Strings;
+    } else if lower.contains("flute") || lower.contains("wind") || lower.contains("breath") {
+        params.sample_kind = SampleKind::Flute;
+    } else if lower.contains("brass") || lower.contains("trumpet") || lower.contains("horn") {
+        params.sample_kind = SampleKind::Brass;
+    } else if lower.contains("organ") || lower.contains("church") {
+        params.sample_kind = SampleKind::Organ;
     } else if lower.contains("pad") || lower.contains("ambient") || lower.contains("atmospheric") {
-        params.waveform = Waveform::Saw;
-        params.attack = 0.3;
-        params.decay = 0.4;
-        params.sustain = 0.8;
-        params.release = 1.0;
-    } else if lower.contains("lead") || lower.contains("bright") || lower.contains("sharp") {
-        params.waveform = Waveform::Square;
-        params.attack = 0.01;
-        params.decay = 0.1;
-        params.sustain = 0.7;
-        params.release = 0.2;
-        params.brightness = 0.9;
+        params.sample_kind = SampleKind::Pad;
+    } else {
+        params.sample_kind = base_kind;
     }
 
     if lower.contains("warm") || lower.contains("soft") || lower.contains("mellow") {
-        params.brightness = params.brightness.min(0.3);
+        params.brightness = params.brightness.min(0.35);
+        params.filter_cutoff = params.filter_cutoff.min(0.55);
         params.attack = params.attack.max(0.05);
-        if !lower.contains("guitar") && !lower.contains("lead") && !lower.contains("harsh") {
-            params.waveform = Waveform::Sine;
-        }
     }
-    if lower.contains("harsh") || lower.contains("aggressive") || lower.contains("distort") {
-        params.waveform = Waveform::Square;
-        params.brightness = 1.0;
-        params.sustain = 0.9;
+    if lower.contains("harsh") || lower.contains("aggressive") || lower.contains("bright") {
+        params.brightness = params.brightness.max(0.75);
+        params.filter_cutoff = params.filter_cutoff.max(0.8);
     }
     if lower.contains("fast") || lower.contains("snappy") || lower.contains("percussive") {
         params.attack = 0.001;
@@ -72,22 +58,25 @@ pub fn describe_to_instrument(description: &str, name: &str) -> CustomInstrument
     CustomInstrument {
         name: name.to_string(),
         description: description.to_string(),
+        base_kind: params.sample_kind,
         params,
     }
 }
 
 pub fn ai_summary(_description: &str, instrument: &CustomInstrument) -> String {
     format!(
-        "Created \"{}\" from your description.\n\
-         Waveform: {:?}, Attack: {:.0}ms, Decay: {:.0}ms, Sustain: {:.0}%, Release: {:.0}ms\n\
-         Tip: Try playing it with the piano keyboard. Adjust by describing different qualities \
-         (e.g. \"warmer\", \"more plucky\", \"longer sustain\").",
+        "Created \"{}\" based on {} sample.\n\
+         Attack: {:.0}ms, Decay: {:.0}ms, Sustain: {:.0}%, Release: {:.0}ms\n\
+         Brightness: {:.0}%, Filter: {:.0}%\n\
+         Saved instruments are added to your library automatically.",
         instrument.name,
-        instrument.params.waveform,
+        instrument.base_kind.label(),
         instrument.params.attack * 1000.0,
         instrument.params.decay * 1000.0,
         instrument.params.sustain * 100.0,
         instrument.params.release * 1000.0,
+        instrument.params.brightness * 100.0,
+        instrument.params.filter_cutoff * 100.0,
     )
 }
 
@@ -97,8 +86,8 @@ mod tests {
 
     #[test]
     fn test_guitar_description() {
-        let inst = describe_to_instrument("warm acoustic guitar pluck", "My Guitar");
-        assert_eq!(inst.params.waveform, Waveform::Triangle);
+        let inst = describe_to_instrument("warm acoustic guitar pluck", "My Guitar", SampleKind::Guitar);
+        assert_eq!(inst.base_kind, SampleKind::Guitar);
         assert!(inst.params.decay > 0.3);
     }
 }

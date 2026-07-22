@@ -1,6 +1,7 @@
 use super::{track::Track, Note};
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Project {
     pub tracks: Vec<Track>,
     pub bpm: f32,
@@ -35,6 +36,10 @@ impl Project {
 
     pub fn beat_duration_secs(&self) -> f64 {
         60.0 / self.bpm as f64
+    }
+
+    pub fn duration_secs(&self) -> f64 {
+        self.total_beats * self.beat_duration_secs()
     }
 
     pub fn all_notes(&self) -> Vec<&Note> {
