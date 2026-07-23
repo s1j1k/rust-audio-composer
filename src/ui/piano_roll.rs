@@ -4,7 +4,10 @@ use crate::ui::constants::{
     BEAT_WIDTH, KEY_LABEL_WIDTH, PIANO_ROLL_HIGH, PIANO_ROLL_LOW, PIANO_ROLL_PANEL_HEIGHT,
     PIANO_ROW_HEIGHT,
 };
-use egui::{Color32, Rect, Sense, Ui, Vec2};
+use egui::{Color32, CursorIcon, Rect, Sense, Ui, Vec2};
+
+const PLAYHEAD_HIT_WIDTH: f32 = 14.0;
+const PLAYHEAD_HANDLE_SIZE: f32 = 9.0;
 
 pub fn show_piano_roll_detail(app: &mut DAWApp, ui: &mut Ui) {
     ui.separator();
@@ -21,6 +24,11 @@ pub fn show_piano_roll_detail(app: &mut DAWApp, ui: &mut Ui) {
         if app.recording {
             ui.colored_label(Color32::from_rgb(255, 60, 60), "⏺ Recording to this track");
         }
+        ui.label(
+            egui::RichText::new("Click to seek · double-click to add note · drag playhead ↔")
+                .small()
+                .color(Color32::GRAY),
+        );
     });
 
     let total_beats = app.project.total_beats as f32;
@@ -148,12 +156,70 @@ fn draw_grid_and_notes(
             }
 
             let playhead_x = rect.min.x + app.project.playhead_beat as f32 * BEAT_WIDTH;
-            painter.line_segment(
-                [egui::pos2(playhead_x, rect.min.y), egui::pos2(playhead_x, rect.max.y)],
-                egui::Stroke::new(2.0, Color32::from_rgb(255, 80, 80)),
+            let playhead_rect = Rect::from_min_max(
+                egui::pos2(playhead_x - PLAYHEAD_HIT_WIDTH * 0.5, rect.min.y),
+                egui::pos2(playhead_x + PLAYHEAD_HIT_WIDTH * 0.5, rect.max.y),
             );
 
-            if response.clicked() {
+            let ph_response = ui.interact(
+                playhead_rect,
+                ui.id().with("piano_roll_playhead"),
+                Sense::click_and_drag(),
+            );
+
+            let playhead_active = ph_response.hovered() || ph_response.dragged();
+            if playhead_active {
+                ui.ctx().set_cursor_icon(CursorIcon::ResizeHorizontal);
+            }
+
+            let handle_color = if playhead_active {
+                Color32::from_rgb(255, 120, 120)
+            } else {
+                Color32::from_rgb(255, 80, 80)
+            };
+
+            painter.line_segment(
+                [egui::pos2(playhead_x, rect.min.y), egui::pos2(playhead_x, rect.max.y)],
+                egui::Stroke::new(if playhead_active { 3.0 } else { 2.0 }, handle_color),
+            );
+
+            let handle_top = rect.min.y;
+            let handle_pts = [
+                egui::pos2(playhead_x, handle_top),
+                egui::pos2(playhead_x - PLAYHEAD_HANDLE_SIZE, handle_top + PLAYHEAD_HANDLE_SIZE),
+                egui::pos2(playhead_x + PLAYHEAD_HANDLE_SIZE, handle_top + PLAYHEAD_HANDLE_SIZE),
+            ];
+            painter.add(egui::Shape::convex_polygon(
+                handle_pts.to_vec(),
+                handle_color,
+                egui::Stroke::new(1.0, Color32::WHITE),
+            ));
+
+            if playhead_active {
+                painter.text(
+                    egui::pos2(playhead_x, handle_top + PLAYHEAD_HANDLE_SIZE + 10.0),
+                    egui::Align2::CENTER_TOP,
+                    "↔",
+                    egui::FontId::proportional(14.0),
+                    Color32::from_rgb(255, 180, 180),
+                );
+            }
+
+            if ph_response.dragged() || ph_response.clicked() {
+                if let Some(pos) = ph_response.interact_pointer_pos() {
+                    let beat = ((pos.x - rect.min.x) / BEAT_WIDTH).max(0.0) as f64;
+                    app.set_playhead(beat);
+                }
+            }
+
+            if response.clicked() && !ph_response.clicked() {
+                if let Some(pos) = response.interact_pointer_pos() {
+                    let beat = ((pos.x - rect.min.x) / BEAT_WIDTH).floor().max(0.0) as f64;
+                    app.set_playhead(beat);
+                }
+            }
+
+            if response.double_clicked() && !ph_response.clicked() {
                 if let Some(pos) = response.interact_pointer_pos() {
                     let beat = ((pos.x - rect.min.x) / BEAT_WIDTH).floor().max(0.0) as f64;
                     let row = ((pos.y - rect.min.y) / PIANO_ROW_HEIGHT).floor() as i32;

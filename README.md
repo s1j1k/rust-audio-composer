@@ -10,10 +10,40 @@ A desktop Digital Audio Workstation (DAW) built in Rust with egui. Play piano an
 - Polyphonic playback with ADSR envelopes
 
 ### Instruments
-Built-in sample-based presets (generated on first run, cached as WAV in `~/.rust-audio-composer/samples/`):
-- **Piano**, **Guitar**, **Bass**, **Strings**, **Flute**, **Brass**, **Organ**, **Pad**
+Built-in instruments use **FreePats** sample libraries ([CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/) — safe for commercial use). Samples download on first launch and cache in `~/.rust-audio-composer/samples/`. See [CREDITS.md](CREDITS.md) for full attribution.
 
-Each uses a distinct waveform sample (Karplus-Strong pluck, additive piano, etc.) rather than a plain oscillator. Custom AI instruments pick a base sample and apply envelope/filter tweaks.
+| Instrument | Source |
+|------------|--------|
+| Piano | FreePats Upright Piano KW |
+| Guitar | FreePats Spanish Classical Guitar |
+| Bass | FreePats Electric Bass YR |
+| Strings / Flute / Brass / Organ / Pad | FreePats synth collection |
+
+If offline, the app falls back to procedural waveforms until samples can be downloaded.
+
+Each instrument has an emoji icon in the track picker (🎹 🎸 🎻 🥁 etc.).
+
+### Beat Sequencer (🥁 Drums)
+- **16-step drum grid** with emoji icons per drum (kick, snare, hi-hats, toms, clap, cymbal, shaker)
+- Click to toggle a hit; **Shift+click** for accent (louder); **right-click** to remove
+- Drum samples from [FreePats Synthesizer Percussion](https://github.com/freepats/synthesizer-percussion) (**CC0**) — cached in `~/.rust-audio-composer/drums/`
+- Add drum tracks via **+ Drum Track** in the sidebar or the sequencer panel
+- Default project includes a drum track on track 2
+
+### Velocity
+- Notes store **velocity** (0–1) which controls playback and export volume
+- **Virtual piano:** click lower on a key = louder; **Shift** = accent, **Alt** = soft on keyboard
+- **Drum sequencer:** normal hits vs shift-accent hits
+- Recording captures velocity automatically
+
+### DJ Tools (🎛 DJ)
+GarageBand-style mix effects for the **master bus** and **each track**:
+- **Distance / underwater** — muffled, far-away sound (auto low-pass + reverb)
+- **Reverb** — space and depth
+- **Phaser swirl** — phase movement (fade in/out character)
+- **Brightness** — manual low-pass filter
+
+Effects apply live on the master output; per-track effects apply fully on **WAV export** and partially during live playback.
 
 ### Timeline & Piano Roll
 

@@ -14,7 +14,7 @@ pub struct Project {
 impl Default for Project {
     fn default() -> Self {
         Self {
-            tracks: vec![Track::new(0), Track::new(1)],
+            tracks: vec![Track::new(0), Track::new_drum(1)],
             bpm: 120.0,
             time_sig_numerator: 4,
             time_sig_denominator: 4,
@@ -28,6 +28,11 @@ impl Project {
     pub fn add_track(&mut self) {
         let index = self.tracks.len();
         self.tracks.push(Track::new(index));
+    }
+
+    pub fn add_drum_track(&mut self) {
+        let index = self.tracks.len();
+        self.tracks.push(Track::new_drum(index));
     }
 
     pub fn beats_per_second(&self) -> f64 {

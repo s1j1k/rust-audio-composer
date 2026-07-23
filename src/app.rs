@@ -23,9 +23,12 @@ pub struct DAWApp {
     pub show_piano: bool,
     pub show_composition: bool,
     pub show_instrument_designer: bool,
+    pub show_drum_sequencer: bool,
+    pub show_dj_panel: bool,
 
     pub held_notes: HashSet<u8>,
     pub playback_notes_active: HashSet<u8>,
+    pub playback_events_done: HashSet<u32>,
     pub last_frame: Instant,
     pub playback_start: Instant,
 
@@ -60,9 +63,12 @@ impl Default for DAWApp {
             show_piano: false,
             show_composition: true,
             show_instrument_designer: false,
+            show_drum_sequencer: false,
+            show_dj_panel: false,
 
             held_notes: HashSet::new(),
             playback_notes_active: HashSet::new(),
+            playback_events_done: HashSet::new(),
             last_frame: Instant::now(),
             playback_start: Instant::now(),
 
@@ -139,21 +145,35 @@ impl DAWApp {
     }
 
     pub fn play_note(&mut self, pitch: u8) {
+        self.play_note_with_velocity(pitch, 0.75);
+    }
+
+    pub fn play_note_with_velocity(&mut self, pitch: u8, velocity: f32) {
         if !self.held_notes.contains(&pitch) {
             self.held_notes.insert(pitch);
-            let velocity = 0.8;
+            let vel = velocity.clamp(0.05, 1.0);
+            let (instrument, track_filter) = self.current_track_playback_info();
             if let Ok(mut eng) = self.audio_engine.lock() {
-                eng.play_note(pitch, velocity);
+                eng.play_note_for_instrument(pitch, vel, &instrument, track_filter);
             }
 
             if self.recording {
                 let beat = self.project.playhead_beat;
-                let note = Note::new(pitch, beat, 1.0);
+                let mut note = Note::new(pitch, beat, 1.0);
+                note.velocity = vel;
                 if let Some(track) = self.project.tracks.get_mut(self.current_track) {
                     track.add_note(note);
                 }
             }
         }
+    }
+
+    fn current_track_playback_info(&self) -> (InstrumentId, f32) {
+        self.project
+            .tracks
+            .get(self.current_track)
+            .map(|t| (t.instrument.clone(), t.effects.effective_lowpass()))
+            .unwrap_or((InstrumentId::Piano, 1.0))
     }
 
     pub fn release_note(&mut self, pitch: u8) {
@@ -164,12 +184,24 @@ impl DAWApp {
     }
 
     pub fn add_note_at(&mut self, pitch: u8, start_beat: f64, duration: f64) {
-        let note = Note::new(pitch, start_beat, duration);
+        self.add_note_at_with_velocity(pitch, start_beat, duration, 0.8);
+    }
+
+    pub fn add_note_at_with_velocity(
+        &mut self,
+        pitch: u8,
+        start_beat: f64,
+        duration: f64,
+        velocity: f32,
+    ) {
+        let mut note = Note::new(pitch, start_beat, duration);
+        note.velocity = velocity.clamp(0.05, 1.0);
         if let Some(track) = self.project.tracks.get_mut(self.current_track) {
             track.add_note(note);
         }
+        let (instrument, track_filter) = self.current_track_playback_info();
         if let Ok(mut eng) = self.audio_engine.lock() {
-            eng.play_note(pitch, 0.8);
+            eng.play_note_for_instrument(pitch, velocity, &instrument, track_filter);
         }
     }
 
@@ -184,6 +216,43 @@ impl DAWApp {
         self.project.playhead_beat = beat.clamp(0.0, self.project.total_beats);
     }
 
+    pub fn go_to_start(&mut self) {
+        self.project.playhead_beat = 0.0;
+        self.stop_playback_notes();
+    }
+
+    pub fn go_to_end(&mut self) {
+        let content_end = self.project_end_beat();
+        self.project.playhead_beat = content_end.max(0.0);
+        self.stop_playback_notes();
+    }
+
+    fn project_end_beat(&self) -> f64 {
+        let last_note = self
+            .project
+            .tracks
+            .iter()
+            .flat_map(|t| t.notes.iter())
+            .map(|n| n.end_beat())
+            .fold(0.0_f64, f64::max);
+        if last_note > 0.0 {
+            last_note.min(self.project.total_beats)
+        } else {
+            self.project.total_beats
+        }
+    }
+
+    pub fn handle_transport_shortcuts(&mut self, ctx: &egui::Context) {
+        ctx.input(|i| {
+            if i.key_pressed(egui::Key::Home) {
+                self.go_to_start();
+            }
+            if i.key_pressed(egui::Key::End) {
+                self.go_to_end();
+            }
+        });
+    }
+
     pub fn toggle_playback(&mut self) {
         self.playing = !self.playing;
         if self.playing {
@@ -196,8 +265,7 @@ impl DAWApp {
 
     pub fn stop_playback(&mut self) {
         self.playing = false;
-        self.project.playhead_beat = 0.0;
-        self.stop_playback_notes();
+        self.go_to_start();
         if let Ok(mut eng) = self.audio_engine.lock() {
             eng.stop_all();
         }
@@ -209,6 +277,7 @@ impl DAWApp {
                 eng.stop_note(pitch);
             }
         }
+        self.playback_events_done.clear();
     }
 
     pub fn update_playback(&mut self) {
@@ -227,27 +296,41 @@ impl DAWApp {
         }
 
         let beat = self.project.playhead_beat;
-        for (_track_idx, track) in self.project.tracks.iter().enumerate() {
+        for (track_idx, track) in self.project.tracks.iter().enumerate() {
             if track.muted {
                 continue;
             }
-            for note in &track.notes {
+            let is_drum = track.is_drum();
+            for (note_idx, note) in track.notes.iter().enumerate() {
                 let note_start = note.start_beat;
                 let note_end = note.end_beat();
                 let tolerance = 0.05;
+                let event_key =
+                    ((track_idx as u32) << 24) | ((note_idx as u32) << 12) | (note.pitch as u32);
 
                 if (beat - note_start).abs() < tolerance
-                    && !self.playback_notes_active.contains(&note.pitch)
+                    && !self.playback_events_done.contains(&event_key)
                 {
                     if let Ok(mut eng) = self.audio_engine.lock() {
-                        let inst_name = track.instrument.label();
-                        eng.set_profile(&inst_name);
-                        eng.play_note(note.pitch, note.velocity);
+                        let inst = track.instrument.clone();
+                        let filter = track.effects.effective_lowpass();
+                        eng.play_note_for_instrument(
+                            note.pitch,
+                            note.velocity * track.volume,
+                            &inst,
+                            filter,
+                        );
                     }
-                    self.playback_notes_active.insert(note.pitch);
+                    self.playback_events_done.insert(event_key);
+                    if !is_drum {
+                        self.playback_notes_active.insert(note.pitch);
+                    }
                 }
 
-                if beat >= note_end && self.playback_notes_active.contains(&note.pitch) {
+                if !is_drum
+                    && beat >= note_end
+                    && self.playback_notes_active.contains(&note.pitch)
+                {
                     if let Ok(mut eng) = self.audio_engine.lock() {
                         eng.stop_note(note.pitch);
                     }
@@ -333,6 +416,7 @@ impl DAWApp {
                 self.project.clone(),
                 self.custom_instruments.clone(),
                 self.audio.master_volume,
+                self.audio.master_effects.clone(),
             );
             match saved.save_to_path(&path) {
                 Ok(()) => {
@@ -375,6 +459,7 @@ impl DAWApp {
                 &path,
                 sr,
                 self.audio.master_volume,
+                &self.audio.master_effects,
             ) {
                 Ok(()) => {
                     self.status_message = Some(format!("Exported audio to {}", path.display()))
@@ -388,6 +473,8 @@ impl DAWApp {
         self.project = saved.project;
         self.custom_instruments = saved.custom_instruments;
         self.audio.master_volume = saved.master_volume;
+        let master_fx = saved.master_effects;
+        self.audio.master_effects = master_fx;
         self.current_track = 0;
         if self.current_track >= self.project.tracks.len() && !self.project.tracks.is_empty() {
             self.current_track = self.project.tracks.len() - 1;
@@ -395,6 +482,7 @@ impl DAWApp {
 
         if let Ok(mut eng) = self.audio_engine.lock() {
             eng.master_volume = saved.master_volume;
+            eng.master_effects = master_fx;
             for profile in crate::model::instrument::default_profiles() {
                 eng.add_profile(profile);
             }
@@ -442,6 +530,66 @@ impl DAWApp {
             self.add_note_at(pitch, beat, 2.0);
         }
     }
+
+    pub fn toggle_drum_step(
+        &mut self,
+        track_idx: usize,
+        drum: crate::model::DrumKind,
+        step: u8,
+        beats_per_bar: f64,
+        steps: u8,
+        accent: bool,
+    ) {
+        let beat = crate::model::step_to_beat(step, beats_per_bar, steps);
+        let pitch = drum.midi_pitch();
+        if let Some(track) = self.project.tracks.get_mut(track_idx) {
+            if let Some(pos) = track
+                .notes
+                .iter()
+                .position(|n| n.pitch == pitch && (n.start_beat - beat).abs() < 0.001)
+            {
+                track.notes.remove(pos);
+            } else {
+                let velocity = if accent { 1.0 } else { 0.72 };
+                let mut note = Note::new(pitch, beat, 0.25);
+                note.velocity = velocity;
+                track.add_note(note);
+                if let Ok(mut eng) = self.audio_engine.lock() {
+                    eng.play_note_for_instrument(pitch, velocity, &InstrumentId::Drums, 1.0);
+                }
+            }
+        }
+    }
+
+    pub fn clear_drum_step(
+        &mut self,
+        track_idx: usize,
+        drum: crate::model::DrumKind,
+        step: u8,
+        beats_per_bar: f64,
+        steps: u8,
+    ) {
+        let beat = crate::model::step_to_beat(step, beats_per_bar, steps);
+        let pitch = drum.midi_pitch();
+        if let Some(track) = self.project.tracks.get_mut(track_idx) {
+            track.notes.retain(|n| {
+                !(n.pitch == pitch && (n.start_beat - beat).abs() < 0.001)
+            });
+        }
+    }
+
+    pub fn clear_drum_pattern(&mut self, track_idx: usize) {
+        if let Some(track) = self.project.tracks.get_mut(track_idx) {
+            track.notes.clear();
+        }
+    }
+
+    pub fn preview_drum(&mut self, kind: crate::model::DrumKind) {
+        let pitch = kind.midi_pitch();
+        if let Ok(mut eng) = self.audio_engine.lock() {
+            eng.play_note_for_instrument(pitch, 0.85, &InstrumentId::Drums, 1.0);
+        }
+    }
 }
 
 impl eframe::App for DAWApp {
@@ -449,7 +597,9 @@ impl eframe::App for DAWApp {
         self.update_playback();
         if let Ok(mut eng) = self.audio_engine.lock() {
             eng.master_volume = self.audio.master_volume;
+            eng.master_effects = self.audio.master_effects.clone();
         }
+        self.handle_transport_shortcuts(ctx);
         ctx.request_repaint();
 
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
@@ -485,6 +635,28 @@ impl eframe::App for DAWApp {
         }
 
         self.show_piano_window(ctx);
+
+        if self.show_drum_sequencer {
+            let mut show = self.show_drum_sequencer;
+            egui::Window::new("Beat Sequencer")
+                .open(&mut show)
+                .default_size([620.0, 420.0])
+                .show(ctx, |ui| {
+                    crate::ui::show_drum_sequencer(self, ui);
+                });
+            self.show_drum_sequencer = show;
+        }
+
+        if self.show_dj_panel {
+            let mut show = self.show_dj_panel;
+            egui::Window::new("DJ Tools")
+                .open(&mut show)
+                .default_size([360.0, 480.0])
+                .show(ctx, |ui| {
+                    crate::ui::show_dj_panel(self, ui);
+                });
+            self.show_dj_panel = show;
+        }
 
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.vertical(|ui| {

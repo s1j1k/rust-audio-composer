@@ -37,14 +37,34 @@ pub fn show_track_panel(app: &mut DAWApp, ui: &mut Ui) {
         ui.checkbox(&mut app.project.tracks[i].muted, "Mute track");
 
         let current_label = app.project.tracks[i].instrument.label();
+        let current_icon = app.project.tracks[i].instrument.icon();
         ui.label("Instrument:");
         egui::ComboBox::from_id_salt("selected_track_instrument")
-            .selected_text(&current_label)
+            .selected_text(format!("{} {}", current_icon, current_label))
             .show_ui(ui, |ui| {
+                if ui
+                    .selectable_label(
+                        app.project.tracks[i].instrument.is_drum_track(),
+                        "🥁 Drums",
+                    )
+                    .clicked()
+                {
+                    app.project.tracks[i].instrument = InstrumentId::Drums;
+                    app.project.tracks[i].kind = crate::model::TrackKind::Drum;
+                    if app.current_track == i {
+                        app.sync_instrument_to_track();
+                    }
+                }
+                ui.separator();
                 for &kind in SampleKind::all() {
                     let label = kind.label();
-                    if ui.selectable_label(current_label == label, label).clicked() {
+                    let icon = kind.icon();
+                    if ui
+                        .selectable_label(current_label == label, format!("{} {}", icon, label))
+                        .clicked()
+                    {
                         app.project.tracks[i].instrument = InstrumentId::from_sample_kind(kind);
+                        app.project.tracks[i].kind = crate::model::TrackKind::Melodic;
                         if app.current_track == i {
                             app.sync_instrument_to_track();
                         }
@@ -66,11 +86,22 @@ pub fn show_track_panel(app: &mut DAWApp, ui: &mut Ui) {
     }
 
     ui.add_space(12.0);
-    if ui.button("+ Add Track").clicked() {
-        app.project.add_track();
-    }
+    ui.horizontal(|ui| {
+        if ui.button("+ Melodic Track").clicked() {
+            app.project.add_track();
+        }
+        if ui.button("+ Drum Track").clicked() {
+            app.project.add_drum_track();
+            app.current_track = app.project.tracks.len() - 1;
+            app.sync_instrument_to_track();
+            app.show_drum_sequencer = true;
+        }
+    });
 
     ui.separator();
     ui.heading("Master");
     ui.add(egui::Slider::new(&mut app.audio.master_volume, 0.0..=1.0).text("Volume"));
+    if ui.button("Open DJ Tools").clicked() {
+        app.show_dj_panel = true;
+    }
 }

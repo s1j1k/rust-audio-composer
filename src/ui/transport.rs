@@ -14,6 +14,14 @@ pub fn show_transport(app: &mut DAWApp, ui: &mut Ui) {
             app.stop_playback();
         }
 
+        if ui.button("⏮").on_hover_text("Go to start (Home)").clicked() {
+            app.go_to_start();
+        }
+
+        if ui.button("⏭").on_hover_text("Go to end (End)").clicked() {
+            app.go_to_end();
+        }
+
         let record_label = if app.recording {
             "⏺ Recording"
         } else {
@@ -45,6 +53,20 @@ pub fn show_transport(app: &mut DAWApp, ui: &mut Ui) {
             .clicked()
         {
             app.show_instrument_designer = !app.show_instrument_designer;
+        }
+
+        if ui
+            .selectable_label(app.show_drum_sequencer, "🥁 Drums")
+            .clicked()
+        {
+            app.show_drum_sequencer = !app.show_drum_sequencer;
+        }
+
+        if ui
+            .selectable_label(app.show_dj_panel, "🎛 DJ")
+            .clicked()
+        {
+            app.show_dj_panel = !app.show_dj_panel;
         }
 
         ui.separator();

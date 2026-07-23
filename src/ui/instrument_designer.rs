@@ -16,7 +16,11 @@ pub fn show_instrument_designer(app: &mut DAWApp, ui: &mut Ui) {
         .selected_text(app.ai_base_kind.label())
         .show_ui(ui, |ui| {
             for &kind in SampleKind::all() {
-                ui.selectable_value(&mut app.ai_base_kind, kind, kind.label());
+                ui.selectable_value(
+                    &mut app.ai_base_kind,
+                    kind,
+                    format!("{} {}", kind.icon(), kind.label()),
+                );
             }
         });
 
@@ -70,10 +74,10 @@ pub fn show_instrument_designer(app: &mut DAWApp, ui: &mut Ui) {
 
     ui.add_space(12.0);
     ui.heading("Instrument Library");
-    ui.label("Built-in samples (cached as WAV in ~/.rust-audio-composer/samples/)");
+    ui.label("Built-in samples from FreePats (CC0) — cached in ~/.rust-audio-composer/samples/");
     for &kind in SampleKind::all() {
         ui.horizontal(|ui| {
-            ui.label(kind.label());
+            ui.label(format!("{} {}", kind.icon(), kind.label()));
             if ui.button("Use").clicked() {
                 app.select_builtin_instrument(kind);
             }
@@ -100,4 +104,21 @@ pub fn show_instrument_designer(app: &mut DAWApp, ui: &mut Ui) {
             });
         }
     }
+
+    ui.add_space(8.0);
+    ui.collapsing("Sample credits (CC0)", |ui| {
+        ui.label(
+            "Built-in instruments use FreePats samples (CC0 — permitted in commercial software). \
+             See CREDITS.md in the repository for full attribution.",
+        );
+        ui.hyperlink_to("FreePats project", "https://freepats.zenvoid.org/");
+        for source in crate::audio::all_sources() {
+            ui.group(|ui| {
+                ui.label(egui::RichText::new(source.kind.label()).strong());
+                ui.label(format!("License: {}", source.license));
+                ui.label(source.attribution);
+                ui.hyperlink_to("Source", source.project_url);
+            });
+        }
+    });
 }

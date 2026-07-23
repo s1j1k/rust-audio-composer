@@ -1,5 +1,8 @@
+use crate::audio::effects::EffectProcessor;
 use crate::audio::synth::SynthEngine;
-use crate::model::instrument::{CustomInstrument, InstrumentProfile, SynthParams};
+use crate::model::drum::DrumKind;
+use crate::model::effects::MasterEffects;
+use crate::model::instrument::{CustomInstrument, InstrumentProfile};
 use crate::model::Project;
 use std::collections::{HashMap, HashSet};
 
@@ -8,49 +11,82 @@ pub fn render_project_to_buffer(
     custom_instruments: &[CustomInstrument],
     sample_rate: f32,
     master_volume: f32,
+    master_effects: &MasterEffects,
+) -> Vec<f32> {
+    let total_samples =
+        (project.duration_secs() * sample_rate as f64).ceil() as u64 + (sample_rate as u64);
+    let mut output = vec![0.0_f32; total_samples as usize];
+
+    let profiles = build_profiles(custom_instruments);
+
+    for track in &project.tracks {
+        if track.muted {
+            continue;
+        }
+        let track_buf = render_track_buffer(project, track, &profiles, sample_rate, master_volume);
+        for (o, t) in output.iter_mut().zip(track_buf.iter()) {
+            *o += t;
+        }
+    }
+
+    let mut master_fx = EffectProcessor::new(sample_rate);
+    for s in &mut output {
+        *s = master_fx.process_master(*s, master_effects);
+    }
+
+    output
+}
+
+fn build_profiles(custom_instruments: &[CustomInstrument]) -> HashMap<String, InstrumentProfile> {
+    let mut profiles: HashMap<String, InstrumentProfile> = crate::model::instrument::default_profiles()
+        .into_iter()
+        .map(|p| (p.name.clone(), p))
+        .collect();
+    for custom in custom_instruments {
+        profiles.insert(custom.name.clone(), InstrumentProfile::from_custom(custom));
+    }
+    profiles
+}
+
+fn render_track_buffer(
+    project: &Project,
+    track: &crate::model::Track,
+    profiles: &HashMap<String, InstrumentProfile>,
+    sample_rate: f32,
+    master_volume: f32,
 ) -> Vec<f32> {
     let total_samples =
         (project.duration_secs() * sample_rate as f64).ceil() as u64 + (sample_rate as u64);
     let mut output = vec![0.0_f32; total_samples as usize];
 
     let mut synth = SynthEngine::new(sample_rate);
-    let mut profiles: HashMap<String, InstrumentProfile> = crate::model::instrument::default_profiles()
-        .into_iter()
-        .map(|p| (p.name.clone(), p))
-        .collect();
+    let mut fx = EffectProcessor::new(sample_rate);
+    let profile_name = track.instrument.label();
+    let params = profiles
+        .get(&profile_name)
+        .map(|p| p.params.clone())
+        .unwrap_or_else(|| {
+            crate::model::instrument::default_params_for_kind(
+                crate::model::instrument::SampleKind::Piano,
+            )
+        });
+    let track_filter = track.effects.effective_lowpass();
 
-    for custom in custom_instruments {
-        profiles.insert(custom.name.clone(), InstrumentProfile::from_custom(custom));
-    }
+    let mut scheduled: Vec<(u64, u8, f32, bool)> = Vec::new();
+    let is_drum = track.is_drum();
 
-    let mut scheduled: Vec<(u64, u8, f32, SynthParams, bool)> = Vec::new();
-
-    for track in &project.tracks {
-        if track.muted {
-            continue;
-        }
-        let profile_name = track.instrument.label();
-        let params = profiles
-            .get(&profile_name)
-            .map(|p| p.params.clone())
-            .unwrap_or_else(|| {
-                crate::model::instrument::default_params_for_kind(
-                    crate::model::instrument::SampleKind::Piano,
-                )
-            });
-
-        for note in &track.notes {
-            let start =
-                (note.start_beat * project.beat_duration_secs() * sample_rate as f64) as u64;
+    for note in &track.notes {
+        let start =
+            (note.start_beat * project.beat_duration_secs() * sample_rate as f64) as u64;
+        let vel = note.velocity * track.volume * master_volume;
+        scheduled.push((start, note.pitch, vel, false));
+        if !is_drum {
             let end =
                 (note.end_beat() * project.beat_duration_secs() * sample_rate as f64) as u64;
-            let vel = note.velocity * track.volume * master_volume;
-            scheduled.push((start, note.pitch, vel, params.clone(), false));
-            scheduled.push((end, note.pitch, vel, params.clone(), true));
+            scheduled.push((end, note.pitch, vel, true));
         }
     }
-
-    scheduled.sort_by_key(|(s, _, _, _, _)| *s);
+    scheduled.sort_by_key(|(s, _, _, _)| *s);
 
     let mut active: HashSet<u8> = HashSet::new();
     let mut event_idx = 0usize;
@@ -58,16 +94,23 @@ pub fn render_project_to_buffer(
     for (i, out) in output.iter_mut().enumerate() {
         let t = i as u64;
         while event_idx < scheduled.len() && scheduled[event_idx].0 <= t {
-            let (_, pitch, vel, params, is_off) = &scheduled[event_idx];
-            if *is_off {
-                synth.note_off(*pitch);
-                active.remove(pitch);
-            } else if active.insert(*pitch) {
-                synth.note_on(*pitch, *vel, params.clone());
+            let (_, pitch, vel, is_off) = scheduled[event_idx];
+            if is_off {
+                synth.note_off(pitch);
+                active.remove(&pitch);
+            } else if is_drum {
+                if let Some(kind) = DrumKind::from_midi_pitch(pitch) {
+                    synth.drum_hit(kind, vel);
+                }
+            } else if active.insert(pitch) {
+                let mut p = params.clone();
+                p.filter_cutoff = (p.filter_cutoff * track_filter).clamp(0.05, 1.0);
+                synth.note_on(pitch, vel, p);
             }
             event_idx += 1;
         }
-        *out = synth.next_sample();
+        let dry = synth.next_sample();
+        *out = fx.process_track(dry, &track.effects);
     }
 
     output
@@ -79,8 +122,15 @@ pub fn export_project_wav(
     path: &std::path::Path,
     sample_rate: f32,
     master_volume: f32,
+    master_effects: &MasterEffects,
 ) -> Result<(), String> {
-    let buffer = render_project_to_buffer(project, custom_instruments, sample_rate, master_volume);
+    let buffer = render_project_to_buffer(
+        project,
+        custom_instruments,
+        sample_rate,
+        master_volume,
+        master_effects,
+    );
     let spec = hound::WavSpec {
         channels: 1,
         sample_rate: sample_rate as u32,

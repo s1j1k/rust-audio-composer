@@ -1,10 +1,11 @@
+use crate::model::effects::MasterEffects;
 use crate::model::instrument::CustomInstrument;
 use crate::model::Project;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
 
-pub const PROJECT_FILE_VERSION: u32 = 1;
+pub const PROJECT_FILE_VERSION: u32 = 2;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SavedProject {
@@ -12,15 +13,23 @@ pub struct SavedProject {
     pub project: Project,
     pub custom_instruments: Vec<CustomInstrument>,
     pub master_volume: f32,
+    #[serde(default)]
+    pub master_effects: MasterEffects,
 }
 
 impl SavedProject {
-    pub fn from_app(project: Project, custom_instruments: Vec<CustomInstrument>, master_volume: f32) -> Self {
+    pub fn from_app(
+        project: Project,
+        custom_instruments: Vec<CustomInstrument>,
+        master_volume: f32,
+        master_effects: MasterEffects,
+    ) -> Self {
         Self {
             version: PROJECT_FILE_VERSION,
             project,
             custom_instruments,
             master_volume,
+            master_effects,
         }
     }
 

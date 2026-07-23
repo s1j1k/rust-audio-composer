@@ -1,4 +1,6 @@
+use crate::audio::drums::DrumLibrary;
 use crate::audio::samples::{InstrumentSample, SampleLibrary};
+use crate::model::drum::DrumKind;
 use crate::model::instrument::SynthParams;
 use crate::music::theory::midi_to_frequency;
 use std::f32::consts::PI;
@@ -143,18 +145,86 @@ impl Voice {
     }
 }
 
+const MAX_DRUM_VOICES: usize = 16;
+
+struct DrumVoice {
+    sample: Arc<Vec<f32>>,
+    sample_pos: f32,
+    amplitude: f32,
+    envelope: f32,
+    sample_rate: f32,
+}
+
+impl DrumVoice {
+    fn new(sample_rate: f32) -> Self {
+        Self {
+            sample: Arc::new(Vec::new()),
+            sample_pos: 0.0,
+            amplitude: 0.0,
+            envelope: 0.0,
+            sample_rate,
+        }
+    }
+
+    fn trigger(&mut self, sample: Arc<Vec<f32>>, velocity: f32) {
+        self.sample = sample;
+        self.sample_pos = 0.0;
+        self.amplitude = velocity.clamp(0.05, 1.0);
+        self.envelope = 1.0;
+    }
+
+    fn is_active(&self) -> bool {
+        self.envelope > 0.001 && !self.sample.is_empty()
+    }
+
+    fn next_sample(&mut self) -> f32 {
+        if !self.is_active() {
+            return 0.0;
+        }
+        let idx = self.sample_pos as usize;
+        if idx >= self.sample.len() {
+            self.envelope = 0.0;
+            return 0.0;
+        }
+        let frac = self.sample_pos - idx as f32;
+        let s0 = self.sample[idx];
+        let s1 = self.sample.get(idx + 1).copied().unwrap_or(0.0);
+        let out = (s0 + (s1 - s0) * frac) * self.amplitude * self.envelope;
+        self.sample_pos += 1.0;
+        if self.sample_pos as usize >= self.sample.len() {
+            self.envelope *= 0.92;
+        }
+        out * 0.7
+    }
+}
+
 pub struct SynthEngine {
     voices: Vec<Voice>,
+    drum_voices: Vec<DrumVoice>,
     sample_rate: f32,
     library: SampleLibrary,
+    drum_library: DrumLibrary,
 }
 
 impl SynthEngine {
     pub fn new(sample_rate: f32) -> Self {
         Self {
             voices: (0..MAX_VOICES).map(|_| Voice::new(sample_rate)).collect(),
+            drum_voices: (0..MAX_DRUM_VOICES)
+                .map(|_| DrumVoice::new(sample_rate))
+                .collect(),
             sample_rate,
             library: SampleLibrary::new(sample_rate),
+            drum_library: DrumLibrary::new(sample_rate),
+        }
+    }
+
+    pub fn drum_hit(&mut self, kind: DrumKind, velocity: f32) {
+        let sample = self.drum_library.get(kind).data.clone();
+        if let Some(v) = self.drum_voices.iter_mut().find(|v| !v.is_active()) {
+            v.trigger(sample, velocity);
+        } else if let Some(v) = self.drum_voices.first_mut() {
+            v.trigger(sample, velocity);
         }
     }
 
@@ -190,6 +260,8 @@ impl SynthEngine {
     }
 
     pub fn next_sample(&mut self) -> f32 {
-        self.voices.iter_mut().map(|v| v.next_sample()).sum()
+        let melodic: f32 = self.voices.iter_mut().map(|v| v.next_sample()).sum();
+        let drums: f32 = self.drum_voices.iter_mut().map(|v| v.next_sample()).sum();
+        melodic + drums
     }
 }

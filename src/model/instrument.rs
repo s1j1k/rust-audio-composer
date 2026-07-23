@@ -26,6 +26,19 @@ impl SampleKind {
         }
     }
 
+    pub fn icon(&self) -> &'static str {
+        match self {
+            Self::Piano => "🎹",
+            Self::Guitar => "🎸",
+            Self::Bass => "🎸",
+            Self::Strings => "🎻",
+            Self::Flute => "🪈",
+            Self::Brass => "🎺",
+            Self::Organ => "🎹",
+            Self::Pad => "🌊",
+        }
+    }
+
     pub fn all() -> &'static [SampleKind] {
         &[
             Self::Piano,
@@ -50,6 +63,7 @@ pub enum InstrumentId {
     Brass,
     Organ,
     Pad,
+    Drums,
     Custom(String),
 }
 
@@ -64,8 +78,28 @@ impl InstrumentId {
             Self::Brass => "Brass".to_string(),
             Self::Organ => "Organ".to_string(),
             Self::Pad => "Pad".to_string(),
+            Self::Drums => "Drums".to_string(),
             Self::Custom(name) => name.clone(),
         }
+    }
+
+    pub fn icon(&self) -> &'static str {
+        match self {
+            Self::Piano => "🎹",
+            Self::Guitar => "🎸",
+            Self::Bass => "🎸",
+            Self::Strings => "🎻",
+            Self::Flute => "🪈",
+            Self::Brass => "🎺",
+            Self::Organ => "🎹",
+            Self::Pad => "🌊",
+            Self::Drums => "🥁",
+            Self::Custom(_) => "✨",
+        }
+    }
+
+    pub fn is_drum_track(&self) -> bool {
+        matches!(self, Self::Drums)
     }
 
     pub fn sample_kind(&self) -> Option<SampleKind> {
@@ -78,7 +112,7 @@ impl InstrumentId {
             Self::Brass => Some(SampleKind::Brass),
             Self::Organ => Some(SampleKind::Organ),
             Self::Pad => Some(SampleKind::Pad),
-            Self::Custom(_) => None,
+            Self::Drums | Self::Custom(_) => None,
         }
     }
 

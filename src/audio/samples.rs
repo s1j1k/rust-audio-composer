@@ -1,6 +1,8 @@
+use crate::audio::sample_sources::{self, SampleFileFormat, SampleSource};
 use crate::model::instrument::SampleKind;
 use std::f32::consts::PI;
 use std::fs;
+use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -9,6 +11,7 @@ pub struct InstrumentSample {
     pub data: Arc<Vec<f32>>,
     pub root_midi: u8,
     pub root_freq: f32,
+    pub from_foss: bool,
 }
 
 pub struct SampleLibrary {
@@ -16,42 +19,222 @@ pub struct SampleLibrary {
     cache_dir: PathBuf,
 }
 
+const SAMPLE_MANIFEST_VERSION: &str = "freepats-cc0-v1";
+
 impl SampleLibrary {
     pub fn new(sample_rate: f32) -> Self {
         let cache_dir = sample_cache_dir();
         let _ = fs::create_dir_all(&cache_dir);
+        ensure_manifest(&cache_dir);
         let mut map = std::collections::HashMap::new();
         for &kind in SampleKind::all() {
-            let sample = Self::load_or_generate_kind(kind, sample_rate, &cache_dir);
+            let source = sample_sources::sources_for_kind(kind);
+            let sample = Self::load_or_fetch_kind(kind, source, sample_rate, &cache_dir);
             map.insert(kind, sample);
         }
-        Self { samples: map, cache_dir }
+        Self {
+            samples: map,
+            cache_dir,
+        }
     }
 
     pub fn get(&self, kind: SampleKind) -> &InstrumentSample {
         self.samples.get(&kind).expect("sample kind loaded")
     }
 
-    fn load_or_generate_kind(kind: SampleKind, sample_rate: f32, cache_dir: &Path) -> InstrumentSample {
-        let path = cache_dir.join(format!("{}.wav", kind.label().to_lowercase()));
-        if let Ok(data) = load_wav_f32(&path) {
+    pub fn cache_dir(&self) -> &Path {
+        &self.cache_dir
+    }
+
+    fn load_or_fetch_kind(
+        kind: SampleKind,
+        source: SampleSource,
+        target_rate: f32,
+        cache_dir: &Path,
+    ) -> InstrumentSample {
+        let cache_wav = cache_dir.join(format!("{}.foss.wav", kind.label().to_lowercase()));
+        let attribution_path = cache_dir.join(format!("{}.attribution.txt", kind.label().to_lowercase()));
+
+        if let Ok(data) = load_wav_f32(&cache_wav) {
             if data.len() > 256 {
                 return InstrumentSample {
                     data: Arc::new(data),
-                    root_midi: 60,
-                    root_freq: 261.63,
+                    root_midi: source.root_midi,
+                    root_freq: midi_to_hz(source.root_midi),
+                    from_foss: true,
                 };
             }
         }
 
-        let data = generate_sample(kind, sample_rate);
-        let _ = save_wav_f32(&path, &data, sample_rate as u32);
+        if let Some(sample) = fetch_and_cache(source, target_rate, &cache_wav, &attribution_path) {
+            return sample;
+        }
+
+        let data = generate_sample(kind, target_rate);
+        let _ = save_wav_f32(&cache_wav, &data, target_rate as u32);
+        let _ = fs::write(
+            &attribution_path,
+            format!(
+                "Procedural fallback (no third-party sample)\nInstrument: {}\n",
+                kind.label()
+            ),
+        );
         InstrumentSample {
             data: Arc::new(data),
             root_midi: 60,
-            root_freq: 261.63,
+            root_freq: midi_to_hz(60),
+            from_foss: false,
         }
     }
+}
+
+fn fetch_and_cache(
+    source: SampleSource,
+    target_rate: f32,
+    cache_wav: &Path,
+    attribution_path: &Path,
+) -> Option<InstrumentSample> {
+    let bytes = download_bytes(source.url)?;
+    let (data, source_rate) = decode_sample(&bytes, source.format)?;
+    if data.len() < 256 {
+        return None;
+    }
+    let resampled = resample(&data, source_rate, target_rate);
+    let _ = save_wav_f32(cache_wav, &resampled, target_rate as u32);
+    let _ = fs::write(
+        attribution_path,
+        format!(
+            "Instrument: {}\nLicense: {}\nAttribution: {}\nSource: {}\nDownload URL: {}\n",
+            source.kind.label(),
+            source.license,
+            source.attribution,
+            source.project_url,
+            source.url,
+        ),
+    );
+    Some(InstrumentSample {
+        data: Arc::new(resampled),
+        root_midi: source.root_midi,
+        root_freq: midi_to_hz(source.root_midi),
+        from_foss: true,
+    })
+}
+
+fn ensure_manifest(cache_dir: &Path) {
+    let path = cache_dir.join("manifest.txt");
+    let current = fs::read_to_string(&path).unwrap_or_default();
+    if current.trim() == SAMPLE_MANIFEST_VERSION {
+        return;
+    }
+    let _ = fs::create_dir_all(cache_dir);
+    if let Ok(entries) = fs::read_dir(cache_dir) {
+        for entry in entries.flatten() {
+            if entry.path() != path {
+                let _ = fs::remove_file(entry.path()).or_else(|_| fs::remove_dir_all(entry.path()));
+            }
+        }
+    }
+    let _ = fs::write(&path, SAMPLE_MANIFEST_VERSION);
+}
+
+pub fn fetch_url_bytes(url: &str) -> Option<Vec<u8>> {
+    download_bytes(url)
+}
+
+pub fn decode_bytes_to_mono(
+    bytes: &[u8],
+    format: SampleFileFormat,
+    target_rate: f32,
+) -> Option<Vec<f32>> {
+    let (data, source_rate) = decode_sample(bytes, format)?;
+    Some(if (source_rate - target_rate).abs() < 1.0 {
+        data
+    } else {
+        resample(&data, source_rate, target_rate)
+    })
+}
+
+fn download_bytes(url: &str) -> Option<Vec<u8>> {
+    let response = ureq::get(url).call().ok()?;
+    if !(200..300).contains(&response.status()) {
+        return None;
+    }
+    let mut reader = response.into_reader();
+    let mut buf = Vec::new();
+    std::io::Read::read_to_end(&mut reader, &mut buf).ok()?;
+    if buf.len() < 256 {
+        return None;
+    }
+    Some(buf)
+}
+
+fn decode_sample(bytes: &[u8], format: SampleFileFormat) -> Option<(Vec<f32>, f32)> {
+    match format {
+        SampleFileFormat::Wav => {
+            let mut reader = hound::WavReader::new(Cursor::new(bytes)).ok()?;
+            let rate = reader.spec().sample_rate as f32;
+            let channels = reader.spec().channels as usize;
+            let raw: Vec<f32> = match reader.spec().sample_format {
+                hound::SampleFormat::Float => reader
+                    .into_samples::<f32>()
+                    .filter_map(|s| s.ok())
+                    .collect(),
+                hound::SampleFormat::Int => reader
+                    .samples::<i16>()
+                    .filter_map(|s| s.ok())
+                    .map(|v| v as f32 / i16::MAX as f32)
+                    .collect(),
+            };
+            Some((mix_to_mono(raw, channels), rate))
+        }
+        SampleFileFormat::Flac => {
+            let mut reader = claxon::FlacReader::new(Cursor::new(bytes)).ok()?;
+            let streaminfo = reader.streaminfo();
+            let rate = streaminfo.sample_rate as f32;
+            let channels = streaminfo.channels as usize;
+            let scale = (1i32 << (streaminfo.bits_per_sample.saturating_sub(1))) as f32;
+            let raw: Vec<f32> = reader
+                .samples()
+                .filter_map(|s| s.ok())
+                .map(|sample| sample as f32 / scale)
+                .collect();
+            Some((mix_to_mono(raw, channels), rate))
+        }
+    }
+}
+
+fn mix_to_mono(interleaved: Vec<f32>, channels: usize) -> Vec<f32> {
+    if channels <= 1 {
+        return normalize(interleaved);
+    }
+    let mut mono = Vec::with_capacity(interleaved.len() / channels);
+    for chunk in interleaved.chunks(channels) {
+        let sum: f32 = chunk.iter().sum();
+        mono.push(sum / channels as f32);
+    }
+    normalize(mono)
+}
+
+fn resample(data: &[f32], from_rate: f32, to_rate: f32) -> Vec<f32> {
+    if (from_rate - to_rate).abs() < 1.0 || data.is_empty() {
+        return data.to_vec();
+    }
+    let ratio = from_rate / to_rate;
+    let out_len = (data.len() as f64 / ratio as f64).ceil() as usize;
+    let mut out = Vec::with_capacity(out_len);
+    for i in 0..out_len {
+        let src = i as f64 * ratio as f64;
+        let idx = src.floor() as usize;
+        let frac = (src - idx as f64) as f32;
+        let s0 = data.get(idx).copied().unwrap_or(0.0);
+        let s1 = data.get(idx + 1).copied().unwrap_or(0.0);
+        out.push(s0 + (s1 - s0) * frac);
+    }
+    out
+}
+
+fn midi_to_hz(midi: u8) -> f32 {
+    440.0 * 2.0_f32.powf((midi as f32 - 69.0) / 12.0)
 }
 
 fn sample_cache_dir() -> PathBuf {
@@ -224,7 +407,7 @@ fn normalize(mut data: Vec<f32>) -> Vec<f32> {
     data
 }
 
-fn save_wav_f32(path: &Path, data: &[f32], sample_rate: u32) -> Result<(), String> {
+pub fn save_wav_f32(path: &Path, data: &[f32], sample_rate: u32) -> Result<(), String> {
     let spec = hound::WavSpec {
         channels: 1,
         sample_rate,
@@ -239,13 +422,14 @@ fn save_wav_f32(path: &Path, data: &[f32], sample_rate: u32) -> Result<(), Strin
     writer.finalize().map_err(|e| e.to_string())
 }
 
-fn load_wav_f32(path: &Path) -> Result<Vec<f32>, String> {
+pub fn load_wav_f32(path: &Path) -> Result<Vec<f32>, String> {
     let mut reader = hound::WavReader::open(path).map_err(|e| e.to_string())?;
-    let samples: Result<Vec<f32>, _> = reader
+    let channels = reader.spec().channels as usize;
+    let raw: Result<Vec<f32>, _> = reader
         .samples::<i16>()
         .map(|s| s.map(|v| v as f32 / i16::MAX as f32))
         .collect();
-    samples.map_err(|e| e.to_string())
+    Ok(mix_to_mono(raw.map_err(|e| e.to_string())?, channels))
 }
 
 #[cfg(test)]
@@ -257,6 +441,15 @@ mod tests {
         for &kind in SampleKind::all() {
             let data = generate_sample(kind, 44100.0);
             assert!(data.len() > 1000, "{:?} sample too short", kind);
+        }
+    }
+
+    #[test]
+    fn test_all_sources_defined() {
+        for &kind in SampleKind::all() {
+            let src = sample_sources::sources_for_kind(kind);
+            assert_eq!(src.kind, kind);
+            assert!(src.url.starts_with("https://"));
         }
     }
 }
