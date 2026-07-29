@@ -106,6 +106,10 @@ impl AudioEngine {
         self.synth.note_off(pitch);
     }
 
+    pub fn set_note_velocity(&mut self, pitch: u8, velocity: f32) {
+        self.synth.set_note_velocity(pitch, velocity);
+    }
+
     pub fn stop_all(&mut self) {
         self.synth.all_notes_off();
     }

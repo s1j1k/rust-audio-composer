@@ -253,6 +253,19 @@ impl SynthEngine {
         }
     }
 
+    pub fn set_note_velocity(&mut self, pitch: u8, velocity: f32) {
+        let freq = midi_to_frequency(pitch);
+        let vel = velocity.clamp(0.05, 1.0);
+        for voice in &mut self.voices {
+            if voice.is_active() {
+                let voice_freq = voice.root_freq * voice.playback_rate;
+                if (voice_freq - freq).abs() < 2.0 {
+                    voice.amplitude = vel;
+                }
+            }
+        }
+    }
+
     pub fn all_notes_off(&mut self) {
         for voice in &mut self.voices {
             voice.release();

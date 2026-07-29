@@ -18,6 +18,9 @@ fn main() -> Result<(), eframe::Error> {
     eframe::run_native(
         "Rust Audio Composer",
         options,
-        Box::new(|_cc| Ok(Box::new(DAWApp::default()))),
+        Box::new(|cc| {
+            ui::theme::apply(&cc.egui_ctx, ui::theme::UiFontFamily::default());
+            Ok(Box::new(DAWApp::default()))
+        }),
     )
 }

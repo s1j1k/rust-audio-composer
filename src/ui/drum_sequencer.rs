@@ -1,6 +1,6 @@
 use crate::app::DAWApp;
-use crate::model::drum::{DrumKind, SEQUENCER_STEPS, step_to_beat};
-use crate::model::note::Note;
+use crate::model::drum::{DrumKind, SEQUENCER_STEPS};
+use crate::ui::theme;
 use egui::{Color32, Ui, Vec2};
 
 const CELL: f32 = 28.0;
@@ -8,8 +8,8 @@ const CELL: f32 = 28.0;
 pub fn show_drum_sequencer(app: &mut DAWApp, ui: &mut Ui) {
     ui.heading("🥁 Beat Sequencer");
     ui.label(
-        "Click steps to toggle hits. Shift+click = accent (louder). Right-click removes. \
-         Samples: FreePats Synthesizer Percussion (CC0).",
+        "Pattern loops while you edit · steps update the preview immediately · \
+         press Record to write changes into a clip on the timeline.",
     );
     ui.separator();
 
@@ -25,19 +25,50 @@ pub fn show_drum_sequencer(app: &mut DAWApp, ui: &mut Ui) {
             app.project.add_drum_track();
             app.current_track = app.project.tracks.len() - 1;
             app.sync_instrument_to_track();
+            app.refresh_sequencer_draft();
         }
         return;
     }
 
-    let beats_per_bar = app.project.time_sig_numerator as f64;
+    if app.sequencer_draft_track != Some(track_idx) {
+        app.refresh_sequencer_draft();
+    }
+
+    let beats_per_bar = app.project.beats_per_bar();
     let steps = SEQUENCER_STEPS;
-    let playhead_step = ((app.project.playhead_beat / beats_per_bar) * steps as f64).floor() as u8
-        % steps;
+    let playhead_step = if app.sequencer_running {
+        ((app.sequencer_loop_beat / beats_per_bar) * steps as f64)
+            .floor()
+            .clamp(0.0, (steps - 1) as f64) as u8
+    } else {
+        ((app.project.playhead_beat / beats_per_bar) * steps as f64).floor() as u8 % steps
+    };
 
     ui.horizontal(|ui| {
         ui.label(format!("Track: {}", app.project.tracks[track_idx].name));
         ui.separator();
         ui.label(format!("{} steps · {} BPM", steps, app.project.bpm as u32));
+        ui.separator();
+        let run_label = if app.sequencer_running {
+            "⏸ Pause loop"
+        } else {
+            "▶ Run loop"
+        };
+        if ui.button(run_label).clicked() {
+            app.toggle_sequencer_run();
+        }
+        if ui.button("↺ Reload bar").on_hover_text("Load pattern from playhead bar on timeline").clicked() {
+            app.refresh_sequencer_draft();
+        }
+        if app.recording {
+            ui.colored_label(Color32::from_rgb(255, 60, 60), "⏺ Recording to clip");
+        } else {
+            ui.label(
+                egui::RichText::new("Preview only — not on timeline until Record")
+                    .small()
+                    .color(Color32::GRAY),
+            );
+        }
     });
 
     ui.add_space(4.0);
@@ -50,7 +81,7 @@ pub fn show_drum_sequencer(app: &mut DAWApp, ui: &mut Ui) {
 
     for s in 0..steps {
         let x = origin.x + s as f32 * CELL;
-        let is_play = s == playhead_step && app.playing;
+        let is_play = s == playhead_step && app.sequencer_running;
         let label_color = if is_play {
             Color32::from_rgb(255, 120, 80)
         } else if s % 4 == 0 {
@@ -62,7 +93,7 @@ pub fn show_drum_sequencer(app: &mut DAWApp, ui: &mut Ui) {
             egui::pos2(x + CELL * 0.5, rect.min.y + 8.0),
             egui::Align2::CENTER_CENTER,
             format!("{}", s + 1),
-            egui::FontId::proportional(10.0),
+            theme::font(theme::FONT_MD),
             label_color,
         );
     }
@@ -73,7 +104,7 @@ pub fn show_drum_sequencer(app: &mut DAWApp, ui: &mut Ui) {
             egui::pos2(rect.min.x + 4.0, y + CELL * 0.5),
             egui::Align2::LEFT_CENTER,
             format!("{} {}", drum.icon(), drum.label()),
-            egui::FontId::proportional(12.0),
+            theme::font(theme::FONT_LG),
             Color32::WHITE,
         );
 
@@ -82,11 +113,11 @@ pub fn show_drum_sequencer(app: &mut DAWApp, ui: &mut Ui) {
                 egui::pos2(origin.x + step as f32 * CELL, y),
                 Vec2::new(CELL - 2.0, CELL - 2.0),
             );
-            let hit = drum_hit_at(&app.project.tracks[track_idx], drum, step, beats_per_bar, steps);
-            let vel = hit.map(|n| n.velocity).unwrap_or(0.0);
-            let active = hit.is_some();
+            let vel = app.sequencer_draft_hit(drum, step);
+            let active = vel.is_some();
+            let vel = vel.unwrap_or(0.0);
 
-            let base = if step == playhead_step {
+            let base = if step == playhead_step && app.sequencer_running {
                 Color32::from_rgba_unmultiplied(255, 100, 60, 40)
             } else if step % 4 == 0 {
                 Color32::from_rgb(45, 45, 55)
@@ -122,10 +153,70 @@ pub fn show_drum_sequencer(app: &mut DAWApp, ui: &mut Ui) {
         if ui.button("Clear pattern").clicked() {
             app.clear_drum_pattern(track_idx);
         }
-        if ui.button("Preview step row").on_hover_text("Click a drum row label area to preview").clicked() {
+        if ui.button("Preview kick").clicked() {
             app.preview_drum(DrumKind::Kick);
         }
     });
+
+    ui.separator();
+    ui.heading("Pattern library");
+    ui.horizontal(|ui| {
+        ui.label("Name:");
+        ui.text_edit_singleline(&mut app.drum_pattern_name_input);
+        if ui.button("💾 Save pattern").clicked() {
+            app.save_drum_pattern(track_idx);
+        }
+    });
+
+    if app.saved_drum_patterns.is_empty() {
+        ui.label("No saved patterns yet — build a bar and save it.");
+    } else {
+        ui.horizontal(|ui| {
+            ui.label("Insert:");
+            let names: Vec<String> = app
+                .saved_drum_patterns
+                .iter()
+                .map(|p| p.name.clone())
+                .collect();
+            egui::ComboBox::from_id_salt("drum_pattern_picker")
+                .selected_text(
+                    names
+                        .get(app.selected_pattern_index)
+                        .cloned()
+                        .unwrap_or_else(|| "Select…".to_string()),
+                )
+                .show_ui(ui, |ui| {
+                    for (i, name) in names.iter().enumerate() {
+                        ui.selectable_value(&mut app.selected_pattern_index, i, name);
+                    }
+                });
+            if ui
+                .button("Insert at playhead")
+                .on_hover_text("Paste saved pattern at current playhead bar")
+                .clicked()
+            {
+                let beat = app.sequencer_bar_start();
+                app.insert_drum_pattern(track_idx, app.selected_pattern_index, beat);
+                app.refresh_sequencer_draft();
+            }
+            if ui.button("Insert at bar start").clicked() {
+                let beat = app.sequencer_bar_start();
+                app.insert_drum_pattern(track_idx, app.selected_pattern_index, beat);
+                app.refresh_sequencer_draft();
+            }
+        });
+        for (i, pat) in app.saved_drum_patterns.clone().iter().enumerate() {
+            let pat_name = pat.name.clone();
+            let hit_count = pat.notes.len();
+            ui.horizontal(|ui| {
+                ui.label(format!("{} — {} hits", pat_name, hit_count));
+                if ui.button("Insert").clicked() {
+                    app.insert_drum_pattern(track_idx, i, app.sequencer_bar_start());
+                    app.refresh_sequencer_draft();
+                }
+            });
+        }
+    }
 
     ui.add_space(6.0);
     ui.collapsing("Drum sample credits (CC0)", |ui| {
@@ -140,18 +231,4 @@ pub fn show_drum_sequencer(app: &mut DAWApp, ui: &mut Ui) {
             "https://github.com/freepats/synthesizer-percussion",
         );
     });
-}
-
-fn drum_hit_at(
-    track: &crate::model::Track,
-    drum: DrumKind,
-    step: u8,
-    beats_per_bar: f64,
-    steps: u8,
-) -> Option<&Note> {
-    let beat = step_to_beat(step, beats_per_bar, steps);
-    let pitch = drum.midi_pitch();
-    track.notes.iter().find(|n| {
-        n.pitch == pitch && (n.start_beat - beat).abs() < 0.001
-    })
 }

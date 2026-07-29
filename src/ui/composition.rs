@@ -1,6 +1,7 @@
 use crate::app::DAWApp;
 use crate::music::theory::{circle_of_fifths, pitch_to_name};
 use crate::music::{detect_key, suggest_progressions, Key};
+use crate::ui::theme;
 use egui::{Pos2, Ui, Vec2};
 
 pub fn show_composition_panel(app: &mut DAWApp, ui: &mut Ui) {
@@ -11,7 +12,8 @@ pub fn show_composition_panel(app: &mut DAWApp, ui: &mut Ui) {
         .project
         .tracks
         .iter()
-        .flat_map(|t| t.notes.iter().map(|n| n.pitch))
+        .flat_map(|t| t.flat_notes())
+        .map(|n| n.pitch)
         .collect();
 
     ui.label("Detected Key");
@@ -86,7 +88,7 @@ pub fn show_composition_panel(app: &mut DAWApp, ui: &mut Ui) {
                 pos,
                 egui::Align2::CENTER_CENTER,
                 label,
-                egui::FontId::proportional(11.0),
+                theme::font(theme::FONT_LG),
                 egui::Color32::WHITE,
             );
 

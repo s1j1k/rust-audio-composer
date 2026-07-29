@@ -108,7 +108,7 @@ The first build can take a minute or two; later runs are much faster.
 
 ### Quick tour
 
-Once the app opens:
+Once the app opens, open **📖 Guide** in the transport bar for an in-app user guide, or use the table below:
 
 | Button | What it does |
 |--------|--------------|
@@ -117,6 +117,9 @@ Once the app opens:
 | **▶ Play** | Play back your composition |
 | **🎼 Compose** | Key detection, chord suggestions, circle of fifths |
 | **✨ AI Instrument** | Create custom instruments from text descriptions |
+| **🥁 Drums** | Beat sequencer with live preview and record-to-timeline |
+| **📖 Guide** | In-app user guide (workflow, shortcuts, panels) |
+| **⚙ Options** | Interface font and help display |
 
 Select a track in the timeline rows, click to set the playhead, enable **⏺ Record**, then play on the piano to capture a section.
 

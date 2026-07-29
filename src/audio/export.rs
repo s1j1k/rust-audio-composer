@@ -75,15 +75,20 @@ fn render_track_buffer(
     let mut scheduled: Vec<(u64, u8, f32, bool)> = Vec::new();
     let is_drum = track.is_drum();
 
-    for note in &track.notes {
-        let start =
-            (note.start_beat * project.beat_duration_secs() * sample_rate as f64) as u64;
-        let vel = note.velocity * track.volume * master_volume;
-        scheduled.push((start, note.pitch, vel, false));
-        if !is_drum {
-            let end =
-                (note.end_beat() * project.beat_duration_secs() * sample_rate as f64) as u64;
-            scheduled.push((end, note.pitch, vel, true));
+    for clip in &track.clips {
+        for note in &clip.notes {
+            for trigger_beat in track.note_trigger_times(clip, note, project.total_beats) {
+                let start =
+                    (trigger_beat * project.beat_duration_secs() * sample_rate as f64) as u64;
+                let vel = note.velocity * track.volume * master_volume;
+                scheduled.push((start, note.pitch, vel, false));
+                if !is_drum {
+                    let end = ((trigger_beat + note.duration_beats)
+                        * project.beat_duration_secs()
+                        * sample_rate as f64) as u64;
+                    scheduled.push((end, note.pitch, vel, true));
+                }
+            }
         }
     }
     scheduled.sort_by_key(|(s, _, _, _)| *s);

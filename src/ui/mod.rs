@@ -1,7 +1,12 @@
 mod composition;
 pub mod constants;
+mod guide;
+mod hints;
+mod options;
+pub mod theme;
 mod dj_panel;
 mod drum_sequencer;
+pub mod grid;
 mod instrument_designer;
 mod piano;
 mod piano_roll;
@@ -11,8 +16,10 @@ mod transport;
 
 pub use composition::show_composition_panel;
 pub use dj_panel::show_dj_panel;
+pub use guide::show_user_guide;
 pub use drum_sequencer::show_drum_sequencer;
 pub use instrument_designer::show_instrument_designer;
+pub use options::show_options;
 pub use piano::show_piano_window;
 pub use piano_roll::show_piano_roll_detail;
 pub use timeline::show_multi_track_timeline;

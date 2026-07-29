@@ -31,7 +31,7 @@ pub fn show_transport(app: &mut DAWApp, ui: &mut Ui) {
             .selectable_label(app.recording, record_label)
             .clicked()
         {
-            app.recording = !app.recording;
+            app.toggle_recording();
         }
 
         if ui
@@ -59,7 +59,11 @@ pub fn show_transport(app: &mut DAWApp, ui: &mut Ui) {
             .selectable_label(app.show_drum_sequencer, "🥁 Drums")
             .clicked()
         {
-            app.show_drum_sequencer = !app.show_drum_sequencer;
+            if app.show_drum_sequencer {
+                app.close_drum_sequencer();
+            } else {
+                app.open_drum_sequencer();
+            }
         }
 
         if ui
@@ -67,6 +71,20 @@ pub fn show_transport(app: &mut DAWApp, ui: &mut Ui) {
             .clicked()
         {
             app.show_dj_panel = !app.show_dj_panel;
+        }
+
+        if ui
+            .selectable_label(app.show_options, "⚙ Options")
+            .clicked()
+        {
+            app.show_options = !app.show_options;
+        }
+
+        if ui
+            .selectable_label(app.show_user_guide, "📖 Guide")
+            .clicked()
+        {
+            app.show_user_guide = !app.show_user_guide;
         }
 
         ui.separator();
