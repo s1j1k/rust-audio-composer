@@ -1,0 +1,14 @@
+{
+  "name": "Composer Keys",
+  "short_name": "Keys",
+  "description": "Wireless touch keyboard for Rust Audio Composer on your computer.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#111317",
+  "theme_color": "#111317",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

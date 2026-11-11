@@ -1,85 +1,349 @@
-use super::super::DAWApp;
-
-// Constants for piano keys
-const WHITE_NOTES: [&str; 7] = ["C", "D", "E", "F", "G", "A", "B"];
-const BLACK_NOTES: [&str; 5] = ["C#", "D#", "F#", "G#", "A#"];
+use crate::app::DAWApp;
+use crate::music::theory::{is_black_key, pitch_to_name};
+use crate::ui::theme;
+use egui::{Color32, Key, Pos2, Rect, Response, Sense, Ui, Vec2};
+use std::time::{Duration, Instant};
 
 const WHITE_KEY_WIDTH: f32 = 40.0;
 const WHITE_KEY_HEIGHT: f32 = 160.0;
-const BLACK_KEY_WIDTH: f32 = 0.6 * WHITE_KEY_WIDTH;
+const BLACK_KEY_WIDTH: f32 = WHITE_KEY_WIDTH * 0.6;
 const BLACK_KEY_HEIGHT: f32 = 100.0;
 
-// Offsets for black keys relative to the previous black key
-const BLACK_KEY_OFFSETS: [f32; 5] = [
-    WHITE_KEY_WIDTH - BLACK_KEY_WIDTH * 0.5, // C#
-    WHITE_KEY_WIDTH - BLACK_KEY_WIDTH,       // D#
-    WHITE_KEY_WIDTH * 2.0 - BLACK_KEY_WIDTH, // F#
-    WHITE_KEY_WIDTH - BLACK_KEY_WIDTH,       // G#
-    WHITE_KEY_WIDTH - BLACK_KEY_WIDTH,       // A#
-];
+fn white_key_has_sharp(pitch: u8) -> bool {
+    matches!(pitch % 12, 0 | 2 | 5 | 7 | 9)
+}
 
-impl DAWApp {
-    pub fn show_piano_window(&mut self, ctx: &egui::Context) {
-        egui::Window::new("Virtual Piano")
-            .open(&mut self.show_piano)
-            .default_size([400.0, 200.0])
-            .show(ctx, |ui| {
-                let available_width = ui.available_width();
+fn velocity_from_key_rect(rect: Rect, pos: Option<Pos2>) -> f32 {
+    pos.map(|p| {
+        let t = ((p.y - rect.top()) / rect.height()).clamp(0.0, 1.0);
+        0.35 + (1.0 - t) * 0.65
+    })
+    .unwrap_or(0.75)
+}
 
-                // Create a vertical layout for the white and black keys
-                ui.vertical(|ui| {
-                    // White keys
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = 0.0; // No spacing between keys
-                        for note in WHITE_NOTES.iter() {
-                            let response = ui.add(
-                                egui::Button::new(
-                                    egui::RichText::new(*note)
-                                        .color(egui::Color32::from_rgb(80, 80, 80)), // Dark gray text
-                                )
-                                .min_size(egui::vec2(WHITE_KEY_WIDTH, WHITE_KEY_HEIGHT))
-                                .fill(egui::Color32::WHITE)
-                                .stroke(egui::Stroke::new(1.0, egui::Color32::LIGHT_GRAY)),
-                            );
-
-                            if response.clicked() {
-                                println!("Played white note: {}", note);
-                            }
-                        }
-                    });
-
-                    // Black keys (overlaid on white keys)
-                    ui.allocate_new_ui(
-                        egui::UiBuilder::new().max_rect(egui::Rect::from_min_size(
-                            egui::pos2(ui.min_rect().min.x, ui.min_rect().min.y - 1.0), // Move up by 1 pixel
-                            egui::vec2(available_width, BLACK_KEY_HEIGHT),
-                        )),
-                        |ui| {
-                            ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing.x = 0.0; // No spacing
-                                for (i, note) in BLACK_NOTES.iter().enumerate() {
-                                    let space_to_add = BLACK_KEY_OFFSETS[i];
-
-                                    // Add space for alignment
-                                    ui.add_space(space_to_add);
-
-                                    // Add black key button
-                                    let response = ui.add(
-                                        egui::Button::new(
-                                            egui::RichText::new(*note).color(egui::Color32::WHITE), // White text
-                                        )
-                                        .min_size(egui::vec2(BLACK_KEY_WIDTH, BLACK_KEY_HEIGHT))
-                                        .fill(egui::Color32::BLACK)
-                                    );
-
-                                    if response.clicked() {
-                                        println!("Played black note: {}", note);
-                                    }
-                                }
-                            });
-                        },
-                    );
-                });
-            });
+/// Mouse play on a key: strike position sets velocity; dragging down on a held key adds
+/// pressure (aftertouch), like leaning into a real key.
+fn press_key(app: &mut DAWApp, ui: &Ui, rect: Rect, resp: &Response, pitch: u8) {
+    let id = egui::Id::new(("piano_press", pitch));
+    if resp.is_pointer_button_down_on() {
+        let pos = resp.interact_pointer_pos();
+        if !app.held_notes.contains(&pitch) {
+            let raw = velocity_from_key_rect(rect, pos);
+            let vel = app.velocity_curve.apply(raw);
+            app.play_note_with_velocity(pitch, vel);
+            if let Some(p) = pos {
+                ui.ctx().data_mut(|d| d.insert_temp(id, p.y));
+            }
+        } else if let (Some(p), Some(y0)) = (pos, ui.ctx().data(|d| d.get_temp::<f32>(id))) {
+            let pressure = ((p.y - y0) / 50.0).clamp(0.0, 1.0);
+            if let Ok(mut eng) = app.audio_engine.lock() {
+                eng.set_note_pressure(pitch, pressure);
+            }
+        }
+    } else if app.held_notes.contains(&pitch) {
+        app.release_note(pitch);
     }
+}
+
+fn key_fill(app: &DAWApp, pitch: u8, black: bool) -> Color32 {
+    if app.held_notes.contains(&pitch) {
+        if black {
+            Color32::from_rgb(80, 80, 120)
+        } else {
+            Color32::from_rgb(180, 200, 255)
+        }
+    } else if let Some(state) = app.remote_held.get(&pitch) {
+        // Notes from a phone/tablet: green, brighter for harder hits.
+        let v = state.peak_velocity.clamp(0.0, 1.0);
+        if black {
+            Color32::from_rgb(30, (90.0 + 90.0 * v) as u8, 60)
+        } else {
+            Color32::from_rgb((200.0 - 80.0 * v) as u8, 245, (200.0 - 80.0 * v) as u8)
+        }
+    } else if black {
+        Color32::BLACK
+    } else {
+        Color32::WHITE
+    }
+}
+
+pub fn show_piano_window(app: &mut DAWApp, ctx: &egui::Context) {
+    if app.show_piano && !app.keyboard_mapping_seen {
+        app.keyboard_mapping_minimized = false;
+    }
+
+    let mut show = app.show_piano;
+    egui::Window::new("Virtual Piano")
+        .open(&mut show)
+        .default_size([620.0, 320.0])
+        .show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(format!("Instrument: {}", app.current_instrument_name()));
+                ui.separator();
+                ui.label("Octaves:");
+                ui.add(egui::Slider::new(&mut app.piano_keyboard_octaves, 1..=4));
+                ui.label("Base:");
+                let mut oct = (app.piano_keyboard_base / 12) as i32;
+                if ui.add(egui::DragValue::new(&mut oct).range(0..=8)).changed() {
+                    app.piano_keyboard_base = (oct * 12).clamp(0, 108) as u8;
+                }
+            });
+            ui.label(
+                egui::RichText::new(
+                    "Click keys (lower = louder) · drag down on a held key for pressure · \
+                     keyboard: hold longer/firmer for louder attack · scroll to shift octave · \
+                     Shift = accent · Alt = soft · green = played from a phone",
+                )
+                .small()
+                .color(Color32::GRAY),
+            );
+
+            if app.keyboard_mapping_minimized {
+                if ui.button("ℹ Keyboard map").clicked() {
+                    app.keyboard_mapping_minimized = false;
+                }
+            } else {
+                draw_keyboard_mapping_panel(app, ui);
+            }
+
+            ui.separator();
+            draw_virtual_piano_keys(app, ui);
+            handle_keyboard_input(app, ctx);
+        });
+    app.show_piano = show;
+}
+
+fn draw_keyboard_mapping_panel(app: &mut DAWApp, ui: &mut Ui) {
+    ui.group(|ui| {
+        ui.horizontal(|ui| {
+            ui.strong("Computer keyboard map");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button("Minimize").clicked() {
+                    app.keyboard_mapping_minimized = true;
+                    app.keyboard_mapping_seen = true;
+                }
+            });
+        });
+        ui.label("Highlighted keys play notes while this window is open.");
+        draw_qwerty_map(ui, app);
+    });
+}
+
+fn draw_qwerty_map(ui: &mut Ui, app: &DAWApp) {
+    let white_map = keyboard_white_pitches(app);
+    let black_map = keyboard_black_pitches(app);
+
+    let key_w = 28.0;
+    let key_h = 26.0;
+
+    ui.label(
+        egui::RichText::new("White keys: Z X C V B N M , . /")
+            .small()
+            .color(Color32::LIGHT_BLUE),
+    );
+    ui.horizontal_wrapped(|ui| {
+        for (key, pitch) in &white_map {
+            draw_map_key(ui, key_label(*key), Some(*pitch), app, key_w, key_h);
+        }
+    });
+
+    ui.label(
+        egui::RichText::new("Black keys: S D G H J")
+            .small()
+            .color(Color32::LIGHT_BLUE),
+    );
+    ui.horizontal_wrapped(|ui| {
+        for (key, pitch) in &black_map {
+            draw_map_key(ui, key_label(*key), Some(*pitch), app, key_w, key_h);
+        }
+    });
+}
+
+fn draw_map_key(ui: &mut Ui, label: &str, pitch: Option<u8>, app: &DAWApp, w: f32, h: f32) {
+    let active = pitch.map(|p| app.held_notes.contains(&p)).unwrap_or(false);
+    let highlighted = pitch.is_some();
+    let fill = if active {
+        Color32::from_rgb(120, 180, 255)
+    } else if highlighted {
+        Color32::from_rgb(70, 110, 170)
+    } else {
+        Color32::from_rgb(45, 45, 52)
+    };
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(w, h), Sense::hover());
+    let painter = ui.painter_at(rect);
+    painter.rect_filled(rect, 3.0, fill);
+    painter.rect_stroke(rect, 3.0, egui::Stroke::new(1.0, Color32::from_gray(90)));
+    painter.text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        label,
+        theme::font(theme::FONT_MD),
+        Color32::WHITE,
+    );
+    if let Some(p) = pitch {
+        painter.text(
+            rect.center_bottom() - Vec2::new(0.0, 2.0),
+            egui::Align2::CENTER_BOTTOM,
+            pitch_to_name(p),
+            theme::font(theme::FONT_XS),
+            Color32::from_rgb(200, 220, 255),
+        );
+    }
+}
+
+fn key_label(key: Key) -> &'static str {
+    match key {
+        Key::Z => "Z",
+        Key::X => "X",
+        Key::C => "C",
+        Key::V => "V",
+        Key::B => "B",
+        Key::N => "N",
+        Key::M => "M",
+        Key::Comma => ",",
+        Key::Period => ".",
+        Key::Slash => "/",
+        Key::S => "S",
+        Key::D => "D",
+        Key::G => "G",
+        Key::H => "H",
+        Key::J => "J",
+        _ => "?",
+    }
+}
+
+fn keyboard_white_pitches(app: &DAWApp) -> Vec<(Key, u8)> {
+    let start = app.piano_keyboard_base;
+    let end = app.piano_keyboard_end();
+    let keys = [
+        Key::Z, Key::X, Key::C, Key::V, Key::B, Key::N, Key::M, Key::Comma, Key::Period, Key::Slash,
+    ];
+    let white: Vec<u8> = (start..=end).filter(|p| !is_black_key(*p)).collect();
+    keys.iter()
+        .zip(white.iter())
+        .map(|(&k, &p)| (k, p))
+        .collect()
+}
+
+fn keyboard_black_pitches(app: &DAWApp) -> Vec<(Key, u8)> {
+    let start = app.piano_keyboard_base;
+    let end = app.piano_keyboard_end();
+    let keys = [Key::S, Key::D, Key::G, Key::H, Key::J];
+    let black: Vec<u8> = (start..=end).filter(|p| is_black_key(*p)).collect();
+    keys.iter()
+        .zip(black.iter())
+        .map(|(&k, &p)| (k, p))
+        .collect()
+}
+
+fn draw_virtual_piano_keys(app: &mut DAWApp, ui: &mut Ui) {
+    let start = app.piano_keyboard_base;
+    let end = app.piano_keyboard_end();
+
+    let white_pitches: Vec<u8> = (start..=end).filter(|p| !is_black_key(*p)).collect();
+    let total_width = white_pitches.len() as f32 * WHITE_KEY_WIDTH;
+
+    let (area, response) =
+        ui.allocate_exact_size(Vec2::new(total_width, WHITE_KEY_HEIGHT + 8.0), Sense::hover());
+
+    if response.hovered() {
+        let scroll = ui.input(|i| i.smooth_scroll_delta.y + i.raw_scroll_delta.y);
+        if scroll.abs() > 0.01 {
+            let delta = if scroll > 0.0 { -12 } else { 12 };
+            app.piano_keyboard_base =
+                (app.piano_keyboard_base as i32 + delta).clamp(0, 108) as u8;
+        }
+    }
+
+    let painter = ui.painter_at(area);
+    let origin = area.min;
+
+    let mut x = origin.x;
+    for &wp in &white_pitches {
+        let key_rect = Rect::from_min_size(
+            egui::pos2(x, origin.y),
+            Vec2::new(WHITE_KEY_WIDTH, WHITE_KEY_HEIGHT),
+        );
+        let fill = key_fill(app, wp, false);
+        painter.rect_filled(key_rect, 2.0, fill);
+        painter.rect_stroke(key_rect, 2.0, egui::Stroke::new(1.0_f32, Color32::GRAY));
+        painter.text(
+            key_rect.center_bottom() - Vec2::new(0.0, 10.0),
+            egui::Align2::CENTER_BOTTOM,
+            pitch_to_name(wp),
+            theme::font(theme::FONT_MD),
+            Color32::DARK_GRAY,
+        );
+
+        let key_response = ui.interact(key_rect, ui.id().with(("w", wp)), Sense::click_and_drag());
+        press_key(app, ui, key_rect, &key_response, wp);
+        x += WHITE_KEY_WIDTH;
+    }
+
+    x = origin.x;
+    for &wp in &white_pitches {
+        if white_key_has_sharp(wp) {
+            let bp = wp + 1;
+            if bp <= end {
+                let bx = x + WHITE_KEY_WIDTH - BLACK_KEY_WIDTH * 0.5;
+                let key_rect = Rect::from_min_size(
+                    egui::pos2(bx, origin.y),
+                    Vec2::new(BLACK_KEY_WIDTH, BLACK_KEY_HEIGHT),
+                );
+                let fill = key_fill(app, bp, true);
+                painter.rect_filled(key_rect, 2.0, fill);
+
+                let key_response =
+                    ui.interact(key_rect, ui.id().with(("b", bp)), Sense::click_and_drag());
+                press_key(app, ui, key_rect, &key_response, bp);
+            }
+        }
+        x += WHITE_KEY_WIDTH;
+    }
+}
+
+fn keyboard_velocity_modifier(ctx: &egui::Context) -> f32 {
+    ctx.input(|i| {
+        if i.modifiers.shift {
+            1.0
+        } else if i.modifiers.alt {
+            0.4
+        } else {
+            0.75
+        }
+    })
+}
+
+/// Maps hold duration to velocity, mirroring the mouse key's vertical position range.
+fn keyboard_velocity_from_hold(ctx: &egui::Context, hold: Duration) -> f32 {
+    let accent = keyboard_velocity_modifier(ctx);
+    let hold_ms = hold.as_secs_f32() * 1000.0;
+    // Quick firm press reaches full level in ~120 ms; light taps stay softer.
+    let pressure = (1.0 - (-hold_ms / 80.0).exp()).clamp(0.0, 1.0);
+    let dynamic = 0.35 + pressure * 0.65;
+    (accent * dynamic).clamp(0.05, 1.0)
+}
+
+fn handle_keyboard_input(app: &mut DAWApp, ctx: &egui::Context) {
+    let white_map = keyboard_white_pitches(app);
+    let black_map = keyboard_black_pitches(app);
+    let now = Instant::now();
+
+    ctx.input(|i| {
+        for (key, pitch) in white_map.iter().chain(black_map.iter()) {
+            if i.key_down(*key) {
+                if !app.held_notes.contains(pitch) {
+                    app.play_note_with_velocity(*pitch, keyboard_velocity_from_hold(ctx, Duration::ZERO));
+                } else if let Some(state) = app.held_note_details.get(pitch) {
+                    let hold = now.duration_since(state.press_start);
+                    let vel = keyboard_velocity_from_hold(ctx, hold);
+                    if (vel - state.peak_velocity).abs() > 0.02 {
+                        app.update_held_note_velocity(*pitch, vel);
+                    }
+                }
+            } else if app.held_notes.contains(pitch) {
+                app.release_note(*pitch);
+            }
+        }
+    });
 }
