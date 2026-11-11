@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Composer Keys">
+  <meta name="theme-color" content="#111317">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/icon.svg">
+  <link rel="stylesheet" href="/style.css">
+  <title>Composer Keys</title>
+</head>
+<body>
+  <div id="app">
+    <header id="bar">
+      <button id="status" class="chip" aria-label="Connection status"><span class="dot"></span><span id="status-text">Connecting…</span></button>
+      <select id="instrument" aria-label="Instrument"></select>
+      <div class="group" id="octave-group">
+        <button id="oct-down" class="btn" aria-label="Octave down">◀</button>
+        <span id="oct-label" class="label">C3</span>
+        <button id="oct-up" class="btn" aria-label="Octave up">▶</button>
+      </div>
+      <div class="group" id="zoom-group">
+        <button id="zoom-out" class="btn" aria-label="More keys">−</button>
+        <button id="zoom-in" class="btn" aria-label="Fewer, bigger keys">+</button>
+      </div>
+      <span id="chain-label" class="label hidden"></span>
+      <button id="settings-btn" class="btn" aria-label="Settings">⚙</button>
+    </header>
+    <main id="stage">
+      <div id="pedal" aria-label="Sustain pedal"><span>SUSTAIN</span></div>
+      <div id="keys"></div>
+    </main>
+  </div>
+
+  <div id="settings" class="sheet hidden" role="dialog" aria-label="Settings">
+    <div class="sheet-inner">
+      <h2>Touch &amp; feel</h2>
+      <label class="row">Velocity curve
+        <select id="curve">
+          <option value="soft">Soft (light touch)</option>
+          <option value="natural">Natural</option>
+          <option value="hard">Hard (wide dynamics)</option>
+          <option value="fixed">Fixed</option>
+        </select>
+      </label>
+      <label class="row">Sensitivity
+        <input id="sensitivity" type="range" min="0.5" max="1.6" step="0.05" value="1">
+      </label>
+      <label class="row check"><input id="use-position" type="checkbox" checked> Strike position (lower on key = louder)</label>
+      <label class="row check"><input id="use-pressure" type="checkbox" checked> Slide on a held key = pressure / expression</label>
+      <label class="row check"><input id="use-glide" type="checkbox" checked> Glissando (slide across keys)</label>
+      <div class="row">
+        <button id="motion-btn" class="wide">Enable tap strength (accelerometer)</button>
+      </div>
+      <p id="motion-note" class="note"></p>
+      <p id="force-note" class="note"></p>
+
+      <h2>Device</h2>
+      <label class="row">Name <input id="device-name" type="text" maxlength="40"></label>
+      <p class="note" id="latency-note"></p>
+      <p class="note">Tip: Share → <b>Add to Home Screen</b> for a full-screen app. Turn on landscape. Keep the phone and computer on the same Wi-Fi (5&nbsp;GHz is best).</p>
+      <div class="row"><button id="close-settings" class="wide primary">Done</button></div>
+    </div>
+  </div>
+
+  <div id="rotate" class="hidden"><div>↻<br>Rotate to landscape for more keys</div></div>
+  <div id="flash" class="hidden"></div>
+  <script src="/app.js"></script>
+</body>
+</html>

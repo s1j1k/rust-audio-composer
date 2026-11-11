@@ -14,3 +14,12 @@ rfd = "0.15"
 hound = "3.5"
 claxon = "0.4.3"
 ureq = { version = "=2.9.7", default-features = false, features = ["tls", "native-tls"] }
+
+# --- Remote keyboard (iPhone/iPad over local Wi-Fi) ---
+tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "sync", "macros"] }
+axum = { version = "0.8", features = ["ws"] }
+axum-server = { version = "0.7", features = ["tls-rustls-no-provider"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+rcgen = "0.13"
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+qrcode = { version = "0.14", default-features = false }

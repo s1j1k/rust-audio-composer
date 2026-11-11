@@ -1,5 +1,5 @@
 use crate::app::DAWApp;
-use crate::model::instrument::{InstrumentId, SampleKind};
+use crate::model::instrument::InstrumentId;
 use egui::Ui;
 
 pub fn show_track_panel(app: &mut DAWApp, ui: &mut Ui) {
@@ -27,7 +27,6 @@ pub fn show_track_panel(app: &mut DAWApp, ui: &mut Ui) {
 
     if app.current_track < app.project.tracks.len() {
         let i = app.current_track;
-        let profile_names = app.audio.profile_names();
 
         ui.horizontal(|ui| {
             ui.label("Volume");
@@ -111,53 +110,33 @@ pub fn show_track_panel(app: &mut DAWApp, ui: &mut Ui) {
                 .color(egui::Color32::GRAY),
         );
 
-        let current_label = app.project.tracks[i].instrument.label();
-        let current_icon = app.project.tracks[i].instrument.icon();
+        let current = app.project.tracks[i].instrument.clone();
         ui.label("Instrument:");
+        let mut picked: Option<InstrumentId> = None;
         egui::ComboBox::from_id_salt("selected_track_instrument")
-            .selected_text(format!("{} {}", current_icon, current_label))
+            .selected_text(format!("{} {}", current.icon(), current.label()))
+            .height(420.0)
             .show_ui(ui, |ui| {
-                if ui
-                    .selectable_label(
-                        app.project.tracks[i].instrument.is_drum_track(),
-                        "🥁 Drums",
-                    )
-                    .clicked()
-                {
-                    app.project.tracks[i].instrument = InstrumentId::Drums;
-                    app.project.tracks[i].kind = crate::model::TrackKind::Drum;
-                    if app.current_track == i {
-                        app.sync_instrument_to_track();
+                let mut last_group = String::new();
+                for (group, id) in app.instrument_choices() {
+                    if group != last_group {
+                        if !last_group.is_empty() {
+                            ui.separator();
+                        }
+                        ui.label(egui::RichText::new(&group).small().color(egui::Color32::GRAY));
+                        last_group = group;
                     }
-                }
-                ui.separator();
-                for &kind in SampleKind::all() {
-                    let label = kind.label();
-                    let icon = kind.icon();
                     if ui
-                        .selectable_label(current_label == label, format!("{} {}", icon, label))
+                        .selectable_label(current == id, format!("{} {}", id.icon(), id.label()))
                         .clicked()
                     {
-                        app.project.tracks[i].instrument = InstrumentId::from_sample_kind(kind);
-                        app.project.tracks[i].kind = crate::model::TrackKind::Melodic;
-                        if app.current_track == i {
-                            app.sync_instrument_to_track();
-                        }
-                    }
-                }
-                ui.separator();
-                for name in &profile_names {
-                    if SampleKind::all().iter().any(|k| k.label() == name) {
-                        continue;
-                    }
-                    if ui.selectable_label(current_label == *name, name).clicked() {
-                        app.project.tracks[i].instrument = InstrumentId::Custom(name.clone());
-                        if app.current_track == i {
-                            app.sync_instrument_to_track();
-                        }
+                        picked = Some(id);
                     }
                 }
             });
+        if let Some(id) = picked {
+            app.set_track_instrument(id);
+        }
     }
 
     ui.add_space(12.0);

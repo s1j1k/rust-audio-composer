@@ -1,7 +1,12 @@
+use crate::audio::engine::VelocityCurve;
 use crate::audio::export::export_project_wav;
 use crate::audio::AudioEngine;
+use crate::remote::protocol::InstrumentChoice;
+use crate::remote::{RemoteEvent, RemoteServer};
 use crate::model::drum::{beat_to_step, step_to_beat, DrumKind, SEQUENCER_STEPS};
-use crate::model::instrument::{CustomInstrument, InstrumentId, InstrumentProfile, SampleKind};
+use crate::model::instrument::{
+    CustomInstrument, DrumKit, Genre, GenrePreset, InstrumentId, InstrumentProfile, SampleKind,
+};
 use crate::model::{Note, NoteClip, Project, SavedDrumPattern, SavedProject};
 use crate::music::Key;
 use crate::music::theory::NOTE_NAMES;
@@ -137,15 +142,30 @@ pub struct DAWApp {
     pub sequencer_loop_beat: f64,
     pub sequencer_preview_step: u8,
     pub sequencer_last_frame: Instant,
+
+    /// Live touch -> velocity mapping for the on-screen piano and remote devices.
+    pub velocity_curve: VelocityCurve,
+    pub show_remote: bool,
+    pub remote: Option<RemoteServer>,
+    pub remote_error: Option<String>,
+    /// Notes currently held on remote devices (kept apart from `held_notes`, which the
+    /// on-screen piano releases whenever the mouse isn't on a key).
+    pub remote_held: HashMap<u8, HeldNoteState>,
+    pub remote_chain: bool,
+    pub remote_chain_start: u8,
+    pub designer: crate::ui::instrument_designer::DesignerState,
 }
 
 impl Default for DAWApp {
     fn default() -> Self {
+        // Build the engine at the device's real sample rate from the start, so samples are
+        // decoded once at the right rate (and pitch).
+        let sample_rate = probe_output_sample_rate().unwrap_or(44_100.0);
         let mut app = Self {
             project: Project::default(),
-            audio: AudioEngine::new(44100.0),
+            audio: AudioEngine::new(sample_rate),
             audio_stream: None,
-            audio_engine: Arc::new(Mutex::new(AudioEngine::new(44100.0))),
+            audio_engine: Arc::new(Mutex::new(AudioEngine::new(sample_rate))),
 
             playing: false,
             recording: false,
@@ -224,6 +244,15 @@ impl Default for DAWApp {
             sequencer_loop_beat: 0.0,
             sequencer_preview_step: u8::MAX,
             sequencer_last_frame: Instant::now(),
+
+            velocity_curve: VelocityCurve::Natural,
+            show_remote: false,
+            remote: None,
+            remote_error: None,
+            remote_held: HashMap::new(),
+            remote_chain: false,
+            remote_chain_start: 36,
+            designer: Default::default(),
         };
 
         if let Ok(stream) = app.setup_audio_stream() {
@@ -232,6 +261,11 @@ impl Default for DAWApp {
 
         app.sync_instrument_to_track();
         app.migrate_tracks();
+        // `cargo run --release -- --remote` opens the phone keyboard server at launch.
+        if std::env::args().any(|a| a == "--remote") {
+            app.show_remote = true;
+            app.start_remote();
+        }
         app
     }
 }
@@ -244,18 +278,34 @@ impl DAWApp {
             .expect("no output device available");
         let config = device.default_output_config()?;
         let sample_rate = config.sample_rate().0 as f32;
+        let channels = config.channels().max(1) as usize;
 
-        let engine = Arc::new(Mutex::new(AudioEngine::new(sample_rate)));
-        self.audio_engine = engine.clone();
-        self.audio = AudioEngine::new(sample_rate);
+        let same_rate = self
+            .audio_engine
+            .lock()
+            .map(|e| (e.sample_rate() - sample_rate).abs() < 1.0)
+            .unwrap_or(false);
+        if !same_rate {
+            self.audio_engine = Arc::new(Mutex::new(AudioEngine::new(sample_rate)));
+            self.audio = AudioEngine::new(sample_rate);
+        }
+        let engine = self.audio_engine.clone();
 
         let stream = device.build_output_stream(
             &config.config(),
             move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                if let Ok(mut eng) = engine.lock() {
-                    for sample in data.iter_mut() {
-                        *sample = eng.next_sample();
+                match engine.lock() {
+                    Ok(mut eng) => {
+                        // One engine sample per *frame*, copied to every channel. Writing a
+                        // new sample per channel would run the engine at 2x speed in stereo.
+                        for frame in data.chunks_mut(channels) {
+                            let s = eng.next_sample();
+                            for out in frame.iter_mut() {
+                                *out = s;
+                            }
+                        }
                     }
+                    Err(_) => data.fill(0.0),
                 }
             },
             |err| eprintln!("Audio stream error: {}", err),
@@ -446,41 +496,56 @@ impl DAWApp {
             if let Ok(mut eng) = self.audio_engine.lock() {
                 eng.play_note_for_instrument(pitch, vel, &instrument, track_filter);
             }
+            let state = self.start_recorded_note(pitch, vel, Instant::now());
+            self.held_note_details.insert(pitch, state);
+        }
+    }
 
-            let mut recording_anchor = None;
-            if self.recording {
-                let beat = self.project.playhead_beat;
-                if let Some((track_idx, clip_idx)) = self.ensure_recording_clip() {
-                    if track_idx == self.current_track {
-                        if let Some(clip) = self
-                            .project
-                            .tracks
-                            .get(track_idx)
-                            .and_then(|t| t.clips.get(clip_idx))
-                        {
-                            let rel = beat - clip.start_beat;
-                            self.add_note_to_clip_relative(
-                                track_idx,
-                                clip_idx,
-                                pitch,
-                                rel,
-                                0.25,
-                                vel,
-                            );
-                            recording_anchor = Some((track_idx, clip_idx, rel));
-                        }
+    /// Bookkeeping for a note that has started sounding: records it at the playhead when
+    /// recording. `at` is when the note actually started (remote notes arrive a frame late).
+    fn start_recorded_note(&mut self, pitch: u8, vel: f32, at: Instant) -> HeldNoteState {
+        let mut recording_anchor = None;
+        if self.recording {
+            let lag = at.elapsed().as_secs_f64() * self.project.beats_per_second();
+            let beat = (self.project.playhead_beat - if self.playing { lag } else { 0.0 }).max(0.0);
+            if let Some((track_idx, clip_idx)) = self.ensure_recording_clip() {
+                if track_idx == self.current_track {
+                    if let Some(clip) = self
+                        .project
+                        .tracks
+                        .get(track_idx)
+                        .and_then(|t| t.clips.get(clip_idx))
+                    {
+                        let rel = (beat - clip.start_beat).max(0.0);
+                        self.add_note_to_clip_relative(track_idx, clip_idx, pitch, rel, 0.25, vel);
+                        recording_anchor = Some((track_idx, clip_idx, rel));
                     }
                 }
             }
+        }
+        HeldNoteState {
+            press_start: at,
+            peak_velocity: vel,
+            recording_anchor,
+        }
+    }
 
-            self.held_note_details.insert(
-                pitch,
-                HeldNoteState {
-                    press_start: Instant::now(),
-                    peak_velocity: vel,
-                    recording_anchor,
-                },
-            );
+    fn finish_recorded_note(&mut self, pitch: u8, state: HeldNoteState) {
+        if let Some((track_idx, clip_idx, rel_start)) = state.recording_anchor {
+            let hold_secs = state.press_start.elapsed().as_secs_f64();
+            let duration = (hold_secs * self.project.beats_per_second()).clamp(0.125, 16.0);
+            if let Some(track) = self.project.tracks.get_mut(track_idx) {
+                if let Some(clip) = track.clips.get_mut(clip_idx) {
+                    for note in &mut clip.notes {
+                        if note.pitch == pitch && (note.start_beat - rel_start).abs() < 0.001 {
+                            note.duration_beats = duration;
+                            note.velocity = state.peak_velocity;
+                            break;
+                        }
+                    }
+                    clip.recompute_bounds();
+                }
+            }
         }
     }
 
@@ -507,25 +572,7 @@ impl DAWApp {
 
     pub fn release_note(&mut self, pitch: u8) {
         if let Some(state) = self.held_note_details.remove(&pitch) {
-            if let Some((track_idx, clip_idx, rel_start)) = state.recording_anchor {
-                let hold_secs = state.press_start.elapsed().as_secs_f64();
-                let duration =
-                    (hold_secs * self.project.beats_per_second()).clamp(0.125, 16.0);
-                if let Some(track) = self.project.tracks.get_mut(track_idx) {
-                    if let Some(clip) = track.clips.get_mut(clip_idx) {
-                        for note in &mut clip.notes {
-                            if note.pitch == pitch
-                                && (note.start_beat - rel_start).abs() < 0.001
-                            {
-                                note.duration_beats = duration;
-                                note.velocity = state.peak_velocity;
-                                break;
-                            }
-                        }
-                        clip.recompute_bounds();
-                    }
-                }
-            }
+            self.finish_recorded_note(pitch, state);
         }
         self.held_notes.remove(&pitch);
         if let Ok(mut eng) = self.audio_engine.lock() {
@@ -954,9 +1001,20 @@ impl DAWApp {
 
     pub fn preview_drum_with_velocity(&mut self, kind: crate::model::DrumKind, velocity: f32) {
         let pitch = kind.midi_pitch();
+        let kit = self.drum_instrument_for(self.current_track);
         if let Ok(mut eng) = self.audio_engine.lock() {
-            eng.play_note_for_instrument(pitch, velocity, &InstrumentId::Drums, 1.0);
+            eng.play_note_for_instrument(pitch, velocity, &kit, 1.0);
         }
+    }
+
+    /// The drum kit a track plays (genre kit or the FreePats kit).
+    fn drum_instrument_for(&self, track_idx: usize) -> InstrumentId {
+        self.project
+            .tracks
+            .get(track_idx)
+            .map(|t| t.instrument.clone())
+            .filter(|i| i.is_drum_track())
+            .unwrap_or(InstrumentId::Drums)
     }
 
     pub fn sequencer_context_active(&self) -> bool {
@@ -1237,6 +1295,7 @@ impl DAWApp {
     ) {
         let beat = (beat * 4.0).round() / 4.0;
         let pitch = drum.midi_pitch();
+        let kit = self.drum_instrument_for(track_idx);
         let clip_idx = self.drum_clip_idx(track_idx, beat);
         if let Some(track) = self.project.tracks.get_mut(track_idx) {
             let rel = beat
@@ -1256,7 +1315,7 @@ impl DAWApp {
                 note.velocity = velocity;
                 track.add_note_to_clip(clip_idx, note);
                 if let Ok(mut eng) = self.audio_engine.lock() {
-                    eng.play_note_for_instrument(pitch, velocity, &InstrumentId::Drums, 1.0);
+                    eng.play_note_for_instrument(pitch, velocity, &kit, 1.0);
                 }
             }
         }
@@ -1391,10 +1450,16 @@ impl eframe::App for DAWApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.update_playback();
         self.update_sequencer_preview();
+        let (live_instrument, live_filter) = self.current_track_playback_info();
         if let Ok(mut eng) = self.audio_engine.lock() {
             eng.master_volume = self.audio.master_volume;
             eng.master_effects = self.audio.master_effects.clone();
+            eng.live_instrument = live_instrument;
+            eng.live_filter = live_filter;
+            eng.velocity_curve = self.velocity_curve;
         }
+        self.process_remote_events();
+        crate::ui::instrument_designer::tick_preview(self);
         self.handle_transport_shortcuts(ctx);
         ctx.request_repaint();
 
@@ -1431,6 +1496,17 @@ impl eframe::App for DAWApp {
         }
 
         self.show_piano_window(ctx);
+
+        if self.show_remote {
+            let mut show = self.show_remote;
+            egui::Window::new("📱 Remote Keyboard")
+                .open(&mut show)
+                .default_size([460.0, 560.0])
+                .show(ctx, |ui| {
+                    crate::ui::show_remote_panel(self, ui);
+                });
+            self.show_remote = show;
+        }
 
         if self.show_drum_sequencer {
             let mut show = self.show_drum_sequencer;
@@ -1502,5 +1578,136 @@ fn show_timeline_section(app: &mut DAWApp, ui: &mut egui::Ui) {
 impl DAWApp {
     pub fn show_piano_window(&mut self, ctx: &egui::Context) {
         crate::ui::show_piano_window(self, ctx);
+    }
+}
+
+
+/// Ask the default output device for its sample rate without opening a stream.
+fn probe_output_sample_rate() -> Option<f32> {
+    let device = cpal::default_host().default_output_device()?;
+    let config = device.default_output_config().ok()?;
+    Some(config.sample_rate().0 as f32)
+}
+
+impl DAWApp {
+    /// Every instrument the user can pick, grouped for menus (desktop and phone).
+    pub fn instrument_choices(&self) -> Vec<(String, InstrumentId)> {
+        let mut out = Vec::new();
+        for &genre in Genre::all() {
+            for &p in GenrePreset::all().iter().filter(|p| p.genre() == genre) {
+                out.push((genre.label().to_string(), InstrumentId::Preset(p)));
+            }
+            for &k in DrumKit::all().iter().filter(|k| k.genre() == genre) {
+                out.push((genre.label().to_string(), InstrumentId::Kit(k)));
+            }
+            if genre == Genre::Classical {
+                out.push((genre.label().to_string(), InstrumentId::Piano));
+                out.push((genre.label().to_string(), InstrumentId::Harp));
+            }
+        }
+        for &kind in SampleKind::all() {
+            if matches!(kind, SampleKind::Piano | SampleKind::Harp) {
+                continue;
+            }
+            out.push(("Sampled".to_string(), InstrumentId::from_sample_kind(kind)));
+        }
+        out.push(("Sampled".to_string(), InstrumentId::Drums));
+        for c in &self.custom_instruments {
+            out.push(("My Instruments".to_string(), InstrumentId::Custom(c.name.clone())));
+        }
+        out
+    }
+
+    /// Put an instrument on the selected track (from any picker, or a remote device).
+    pub fn set_track_instrument(&mut self, instrument: InstrumentId) {
+        let track_idx = self.current_track;
+        if let Some(track) = self.project.tracks.get_mut(track_idx) {
+            track.kind = if instrument.is_drum_track() {
+                crate::model::TrackKind::Drum
+            } else {
+                crate::model::TrackKind::Melodic
+            };
+            track.instrument = instrument;
+        }
+        self.sync_instrument_to_track();
+    }
+
+    pub fn start_remote(&mut self) {
+        if self.remote.is_some() {
+            return;
+        }
+        match RemoteServer::start(
+            self.audio_engine.clone(),
+            crate::remote::DEFAULT_HTTP_PORT,
+            crate::remote::DEFAULT_HTTPS_PORT,
+        ) {
+            Ok(server) => {
+                server.set_curve(self.velocity_curve);
+                server.set_chain(self.remote_chain, self.remote_chain_start);
+                self.remote = Some(server);
+                self.remote_error = None;
+            }
+            Err(e) => self.remote_error = Some(e),
+        }
+    }
+
+    pub fn stop_remote(&mut self) {
+        if let Some(server) = self.remote.take() {
+            server.stop();
+        }
+        let held: Vec<u8> = self.remote_held.keys().copied().collect();
+        for pitch in held {
+            self.remote_note_off(pitch);
+        }
+    }
+
+    fn remote_note_off(&mut self, pitch: u8) {
+        if let Some(state) = self.remote_held.remove(&pitch) {
+            self.finish_recorded_note(pitch, state);
+        }
+    }
+
+    /// Notes from phones were already played by the network thread; here we only record
+    /// them, light up keys, and keep menus in sync.
+    fn process_remote_events(&mut self) {
+        let Some(server) = &self.remote else { return };
+        let events = server.poll_events();
+        let choices = self.instrument_choices();
+        let current = self.current_instrument_name();
+        if let Some(server) = &self.remote {
+            server.set_instruments(
+                choices
+                    .iter()
+                    .map(|(group, id)| InstrumentChoice {
+                        group: group.clone(),
+                        name: id.label(),
+                    })
+                    .collect(),
+                &current,
+            );
+            server.set_curve(self.velocity_curve);
+        }
+        for event in events {
+            match event {
+                RemoteEvent::NoteOn { pitch, velocity, at, .. } => {
+                    if let Some(old) = self.remote_held.remove(&pitch) {
+                        self.finish_recorded_note(pitch, old);
+                    }
+                    let state = self.start_recorded_note(pitch, velocity, at);
+                    self.remote_held.insert(pitch, state);
+                }
+                RemoteEvent::NoteOff { pitch, .. } => self.remote_note_off(pitch),
+                RemoteEvent::SelectInstrument(label) => {
+                    let id = InstrumentId::from_label(&label);
+                    let known = choices.iter().any(|(_, c)| *c == id);
+                    if known {
+                        self.set_track_instrument(id);
+                        self.status_message = Some(format!("Remote: switched to {}", label));
+                    }
+                }
+                RemoteEvent::SetCurve(curve) => self.velocity_curve = curve,
+                RemoteEvent::DevicesChanged => {}
+            }
+        }
     }
 }

@@ -37,12 +37,32 @@ All beat sequencer samples (kick, snare, hi-hats, toms, clap, cymbal, shaker) fr
 | Cymbal | Cymbal01-01.flac |
 | Shaker | Shaker04.flac |
 
-Cached at: `~/.rust-audio-composer/drums/`
+Cached at: `~/rust-audio-composer/drums/`
 
 ### CC0 1.0 summary
 
 You may copy, modify, distribute, and use these samples for any purpose, including commercial  
 software, without asking permission. See: https://creativecommons.org/publicdomain/zero/1.0/
+
+### Multi-velocity piano (FreePats Upright Piano KW)
+
+The Piano also loads **soft (`vL`) and hard (`vH`) layers** at every C and F♯ from C1 to C8
+from the same CC0 repository, crossfaded by velocity. Cached at `~/rust-audio-composer/multisamples/piano/`.
+
+## Versilian Community Sample Library (VCSL)
+
+| Instrument | Files | License |
+|------------|-------|---------|
+| Concert Harp | `Chordophones/Composite Chordophones/Concert Harp/KSHarp_*_mf1.wav` and `*_f1.wav` (D2, A2, G3, D4, A4, G5, D6, plus C5 as the single-sample fallback) | [CC0 1.0](https://github.com/sgossner/VCSL/blob/master/LICENSE) |
+
+Source: [github.com/sgossner/VCSL](https://github.com/sgossner/VCSL) by Versilian Studios / Sam Gossner.
+Cached at `~/rust-audio-composer/multisamples/concert-harp/`.
+
+## Synthesized instruments
+
+The genre presets (808 Bass, Reese Bass, Dusty Rhodes, Garage Organ, Chamber Strings, etc.)
+and the genre drum kits (Trap 808, Boom Bap, D&B/Jungle, UK Garage) are synthesized in real
+time by this project's own code. They contain no third-party audio.
 
 ## Procedural fallback
 
@@ -53,7 +73,7 @@ waveforms locally. These are original to this project and carry no third-party l
 
 Downloaded samples are stored at:
 
-`~/.rust-audio-composer/samples/`
+`~/rust-audio-composer/samples/`
 
 Each instrument includes a `{name}.attribution.txt` with license and source URL.
 
@@ -63,7 +83,7 @@ These are documented for planned expansion. Verify license before integration:
 
 | Library | License | Notes |
 |---------|---------|-------|
-| [VCSL](https://github.com/sgossner/VCSL) | CC0 | Versilian Community Sample Library — orchestral/world |
+| [VCSL](https://github.com/sgossner/VCSL) | CC0 | More instruments (Steinway B grand, marimba, vibraphone; large files) |
 | [Sonatina Symphonic Orchestra](https://sso.mattiaswestlund.net/) | CC BY 4.0 | Requires attribution in commercial apps |
 
 ## Contact

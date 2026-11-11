@@ -1,7 +1,7 @@
 use crate::app::DAWApp;
 use crate::music::theory::{is_black_key, pitch_to_name};
 use crate::ui::theme;
-use egui::{Color32, Key, Pos2, Rect, Sense, Ui, Vec2};
+use egui::{Color32, Key, Pos2, Rect, Response, Sense, Ui, Vec2};
 use std::time::{Duration, Instant};
 
 const WHITE_KEY_WIDTH: f32 = 40.0;
@@ -19,6 +19,52 @@ fn velocity_from_key_rect(rect: Rect, pos: Option<Pos2>) -> f32 {
         0.35 + (1.0 - t) * 0.65
     })
     .unwrap_or(0.75)
+}
+
+/// Mouse play on a key: strike position sets velocity; dragging down on a held key adds
+/// pressure (aftertouch), like leaning into a real key.
+fn press_key(app: &mut DAWApp, ui: &Ui, rect: Rect, resp: &Response, pitch: u8) {
+    let id = egui::Id::new(("piano_press", pitch));
+    if resp.is_pointer_button_down_on() {
+        let pos = resp.interact_pointer_pos();
+        if !app.held_notes.contains(&pitch) {
+            let raw = velocity_from_key_rect(rect, pos);
+            let vel = app.velocity_curve.apply(raw);
+            app.play_note_with_velocity(pitch, vel);
+            if let Some(p) = pos {
+                ui.ctx().data_mut(|d| d.insert_temp(id, p.y));
+            }
+        } else if let (Some(p), Some(y0)) = (pos, ui.ctx().data(|d| d.get_temp::<f32>(id))) {
+            let pressure = ((p.y - y0) / 50.0).clamp(0.0, 1.0);
+            if let Ok(mut eng) = app.audio_engine.lock() {
+                eng.set_note_pressure(pitch, pressure);
+            }
+        }
+    } else if app.held_notes.contains(&pitch) {
+        app.release_note(pitch);
+    }
+}
+
+fn key_fill(app: &DAWApp, pitch: u8, black: bool) -> Color32 {
+    if app.held_notes.contains(&pitch) {
+        if black {
+            Color32::from_rgb(80, 80, 120)
+        } else {
+            Color32::from_rgb(180, 200, 255)
+        }
+    } else if let Some(state) = app.remote_held.get(&pitch) {
+        // Notes from a phone/tablet: green, brighter for harder hits.
+        let v = state.peak_velocity.clamp(0.0, 1.0);
+        if black {
+            Color32::from_rgb(30, (90.0 + 90.0 * v) as u8, 60)
+        } else {
+            Color32::from_rgb((200.0 - 80.0 * v) as u8, 245, (200.0 - 80.0 * v) as u8)
+        }
+    } else if black {
+        Color32::BLACK
+    } else {
+        Color32::WHITE
+    }
 }
 
 pub fn show_piano_window(app: &mut DAWApp, ctx: &egui::Context) {
@@ -44,8 +90,9 @@ pub fn show_piano_window(app: &mut DAWApp, ctx: &egui::Context) {
             });
             ui.label(
                 egui::RichText::new(
-                    "Click keys (lower = louder) · keyboard: hold longer/firmer for louder attack · \
-                     scroll to shift octave · Shift = accent · Alt = soft",
+                    "Click keys (lower = louder) · drag down on a held key for pressure · \
+                     keyboard: hold longer/firmer for louder attack · scroll to shift octave · \
+                     Shift = accent · Alt = soft · green = played from a phone",
                 )
                 .small()
                 .color(Color32::GRAY),
@@ -217,12 +264,7 @@ fn draw_virtual_piano_keys(app: &mut DAWApp, ui: &mut Ui) {
             egui::pos2(x, origin.y),
             Vec2::new(WHITE_KEY_WIDTH, WHITE_KEY_HEIGHT),
         );
-        let pressed = app.held_notes.contains(&wp);
-        let fill = if pressed {
-            Color32::from_rgb(180, 200, 255)
-        } else {
-            Color32::WHITE
-        };
+        let fill = key_fill(app, wp, false);
         painter.rect_filled(key_rect, 2.0, fill);
         painter.rect_stroke(key_rect, 2.0, egui::Stroke::new(1.0_f32, Color32::GRAY));
         painter.text(
@@ -233,13 +275,8 @@ fn draw_virtual_piano_keys(app: &mut DAWApp, ui: &mut Ui) {
             Color32::DARK_GRAY,
         );
 
-        let key_response = ui.interact(key_rect, ui.id().with(("w", wp)), Sense::click());
-        if key_response.is_pointer_button_down_on() {
-            let vel = velocity_from_key_rect(key_rect, key_response.interact_pointer_pos());
-            app.play_note_with_velocity(wp, vel);
-        } else if app.held_notes.contains(&wp) {
-            app.release_note(wp);
-        }
+        let key_response = ui.interact(key_rect, ui.id().with(("w", wp)), Sense::click_and_drag());
+        press_key(app, ui, key_rect, &key_response, wp);
         x += WHITE_KEY_WIDTH;
     }
 
@@ -253,21 +290,12 @@ fn draw_virtual_piano_keys(app: &mut DAWApp, ui: &mut Ui) {
                     egui::pos2(bx, origin.y),
                     Vec2::new(BLACK_KEY_WIDTH, BLACK_KEY_HEIGHT),
                 );
-                let pressed = app.held_notes.contains(&bp);
-                let fill = if pressed {
-                    Color32::from_rgb(80, 80, 120)
-                } else {
-                    Color32::BLACK
-                };
+                let fill = key_fill(app, bp, true);
                 painter.rect_filled(key_rect, 2.0, fill);
 
-                let key_response = ui.interact(key_rect, ui.id().with(("b", bp)), Sense::click());
-                if key_response.is_pointer_button_down_on() {
-                    let vel = velocity_from_key_rect(key_rect, key_response.interact_pointer_pos());
-                    app.play_note_with_velocity(bp, vel);
-                } else if app.held_notes.contains(&bp) {
-                    app.release_note(bp);
-                }
+                let key_response =
+                    ui.interact(key_rect, ui.id().with(("b", bp)), Sense::click_and_drag());
+                press_key(app, ui, key_rect, &key_response, bp);
             }
         }
         x += WHITE_KEY_WIDTH;

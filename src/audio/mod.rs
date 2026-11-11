@@ -1,7 +1,10 @@
 pub mod engine;
 pub mod export;
 pub mod drum_sources;
+pub mod drum_kits;
 pub mod drums;
+pub mod genre_synth;
+pub mod multisample;
 pub mod effects;
 pub mod sample_sources;
 pub mod samples;

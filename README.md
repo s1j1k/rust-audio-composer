@@ -1,148 +1,174 @@
 # Rust Audio Composer
 
-A desktop Digital Audio Workstation (DAW) built in Rust with egui. Play piano and guitar sounds, record multi-track compositions, and get AI-assisted composition help.
+A native desktop Digital Audio Workstation (DAW) written in Rust. Make beats with expressive, velocity-sensitive instruments for trap, hip hop, drum & bass, UK garage and classical. Record multi-track compositions, design your own sounds by describing them, and **play it all wirelessly from your iPhone or iPad**.
+
+Everything runs locally on your computer: no cloud, no account, and your projects stay on your disk.
+
+## Running locally
+
+### 1. Install Rust (one time)
+
+| OS | Steps |
+|----|-------|
+| **Windows** | Install [rustup](https://rustup.rs) (`winget install Rustlang.Rustup`). Pick **one** toolchain: the default MSVC one needs [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) with "Desktop development with C++"; the GNU one needs MinGW-w64 (e.g. `winget install BrechtSanders.WinLibs.POSIX.UCRT`) and then `rustup default stable-x86_64-pc-windows-gnu`. |
+| **macOS** | `xcode-select --install`, then `curl https://sh.rustup.rs -sSf \| sh` |
+| **Linux** | `curl https://sh.rustup.rs -sSf \| sh` plus ALSA/X11 dev packages (Debian/Ubuntu: `sudo apt install build-essential pkg-config libasound2-dev libx11-dev libxkbcommon-dev libgl1-mesa-dev`) |
+
+Check it worked:
+
+```bash
+cargo --version
+```
+
+> **Low on space on your system drive?** The toolchain and build cache take a few GB. Set `CARGO_HOME` and `RUSTUP_HOME` to a folder on another drive *before* installing (or move them and update the variables).
+
+### 2. Build and run
+
+```bash
+git clone https://github.com/s1j1k/rust-audio-composer.git
+cd rust-audio-composer
+cargo run --release
+```
+
+- The **first build takes a few minutes** (GPU, audio and networking libraries). Later builds take seconds.
+- Use `--release` when playing: the audio engine runs much faster than in a debug build. Plain `cargo run` is fine while developing.
+- On first launch the app downloads its free CC0 instrument samples in the background and caches them in `~/rust-audio-composer/` (`C:\Users\<you>\rust-audio-composer\` on Windows). It works offline too, using synthesized fallbacks until the downloads finish.
+- You need a working audio output (speakers or headphones).
+
+### 3. Run the tests
+
+```bash
+cargo test
+```
+
+## Play from your iPhone or iPad (📱 Remote)
+
+Turn a phone or tablet into a wireless, touch-sensitive keyboard for the app on your computer.
+
+1. Put the phone and computer on the **same Wi-Fi** (5 GHz is best; the computer can be on Ethernet).
+2. In the desktop app click **📱 Remote**. The first time, Windows asks about network access: allow **Private networks**.
+3. **Scan the QR code** with the iPhone camera (or type the `http://…:7878/` address into Safari).
+4. Optional: tap Share → **Add to Home Screen** for a full-screen app, and play in landscape.
+
+Tip: `cargo run --release -- --remote` starts the remote keyboard as soon as the app opens.
+
+What you get:
+- **Real-time playing.** Notes go straight from the network into the audio engine without waiting for the screen to redraw. The phone shows live latency (green = under 15 ms one-way).
+- **Touch sensitivity:**
+  - **Where you strike** the key sets velocity (lower on the key = louder).
+  - **Slide on a held key** for pressure/expression: the sound opens up, swells and gains vibrato.
+  - **Slide across keys** for glissando.
+  - **3D Touch iPhones and Apple Pencil** add real pressure.
+  - **Tap strength**, optional: uses the accelerometer to feel how hard you hit (see below).
+- **Sustain pedal** strip, octave and zoom controls, and an instrument picker synced with the selected track. Velocity curves (Soft / Natural / Hard / Fixed) are set on either device.
+- **Recording works.** Arm ⏺ Record on the desktop and play from the phone.
+- **Chain several devices into one long keyboard.** Tick *Chain devices* in the Remote window, put the devices in left-to-right order with ◀ ▶ (use **Flash** to tell them apart), and keys continue from one screen to the next, sized for the smallest screen.
+- **Safe disconnects.** If a phone locks or drops off Wi-Fi, its notes are released automatically, so nothing gets stuck.
+
+**Tap-strength velocity (HTTPS, optional).** iOS only shares the accelerometer with secure pages, so the app also serves HTTPS on port 7879 using a certificate authority it creates on your computer. One-time setup is shown in the Remote window: open `http://<computer-ip>:7878/ca.crt` on the phone, install the profile, enable it under *Settings → General → About → Certificate Trust Settings*, then use the `https://…:7879/` address and turn on **⚙ → Enable tap strength**.
+
+Why local Wi-Fi instead of the internet? Same-room Wi-Fi is a few milliseconds. A round trip through a cloud server is typically 20–80 ms and jittery, and stops working when the internet does.
 
 ## Features
 
+### Instruments for beat-making
+
+**Genre presets (synthesized in real time, no downloads).** Velocity changes tone as well as volume, and pressure from a phone or mouse drag opens the sound up.
+
+| Genre | Melodic | Drum kit |
+|-------|---------|----------|
+| Trap | 808 Bass (pitch drop + saturation), Trap Bell (FM), Dark Pluck | Trap 808 Kit |
+| Hip Hop | Dusty Rhodes (FM electric piano with velocity "bark"), Boom Bap Bass | Boom Bap Kit (lo-fi processed) |
+| Drum & Bass | Reese Bass (detuned, moving filter), Sub Bass, Liquid Pad | D&B / Jungle Kit |
+| UK Garage | Garage Organ stab, 2-Step Chord Stab, Garage Bass | UK Garage Kit |
+| Classical | Chamber Strings (bowed swell + vibrato), Pizzicato, **Piano**, **Concert Harp** | — |
+
+**Sampled instruments (free CC0 recordings).**
+
+| Instrument | Source | Velocity layers |
+|------------|--------|-----------------|
+| Piano | FreePats Upright Piano KW | **Soft + hard recordings**, 15 zones |
+| Concert Harp | VCSL (Versilian Community Sample Library) | **mf + f recordings**, 7 zones |
+| Guitar, Bass, Strings, Flute, Brass, Organ, Pad | FreePats | single sample, velocity-tracked tone |
+| Drums | FreePats Synthesizer Percussion | velocity-tracked tone |
+
+Multi-velocity instruments crossfade between real soft and hard recordings, so soft playing sounds genuinely softer (rounder, darker), not just quieter. These download once in the background. See [CREDITS.md](CREDITS.md).
+
+Drum kits play from the General MIDI drum map *and* from any octave (C = kick, D = snare, F♯ = closed hat, A♯ = open hat…), so they work from a phone. Closed hats choke open hats.
+
+### ✨ Sound Designer (describe a timbre)
+1. Describe the sound the way you'd tell a producer friend: *"dark gritty 808 with a long tail"*, *"dusty lofi rhodes, warm and a bit wobbly"*, *"lush cinematic strings that swell slowly"*.
+2. As you type, **"I'm hearing:"** shows what it understood: the base instrument (genre-aware, so "trap bass" → 808 and "dnb bass" → Reese) and each trait.
+3. **✨ Create sound** plays a short soft-then-hard preview so you hear the velocity response.
+4. **Keep shaping it**, either with one-click chips (Warmer, Punchier, Longer tail, Wider, Grittier, Vintage…) or by typing follow-ups like *"a bit darker and less boomy"* or *"make it a harp instead"*. It understands intensity ("a bit", "very"), negation ("not too bright") and comparatives ("warmer"). There's undo, and sliders for fine-tuning.
+5. **💾 Save to library.** Custom instruments appear in every instrument picker, including on your phone. **Remix** reloads one into the designer.
+
+It runs entirely on your computer.
+
 ### Virtual Piano
 - Clickable piano keyboard window (🎹 button in transport bar)
+- Click lower on a key for louder; **drag down on a held key for pressure**
 - Computer keyboard mapping: **Z-M** for white keys, **S/D/G/H/J** for black keys
-- Polyphonic playback with ADSR envelopes
-
-### Instruments
-Built-in instruments use **FreePats** sample libraries ([CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/) — safe for commercial use). Samples download on first launch and cache in `~/.rust-audio-composer/samples/`. See [CREDITS.md](CREDITS.md) for full attribution.
-
-| Instrument | Source |
-|------------|--------|
-| Piano | FreePats Upright Piano KW |
-| Guitar | FreePats Spanish Classical Guitar |
-| Bass | FreePats Electric Bass YR |
-| Strings / Flute / Brass / Organ / Pad | FreePats synth collection |
-
-If offline, the app falls back to procedural waveforms until samples can be downloaded.
-
-Each instrument has an emoji icon in the track picker (🎹 🎸 🎻 🥁 etc.).
+- Keys played from a phone light up green
 
 ### Beat Sequencer (🥁 Drums)
 - **16-step drum grid** with emoji icons per drum (kick, snare, hi-hats, toms, clap, cymbal, shaker)
 - Click to toggle a hit; **Shift+click** for accent (louder); **right-click** to remove
-- Drum samples from [FreePats Synthesizer Percussion](https://github.com/freepats/synthesizer-percussion) (**CC0**) — cached in `~/.rust-audio-composer/drums/`
+- Pick a genre kit for the drum track in the sidebar instrument menu
 - Add drum tracks via **+ Drum Track** in the sidebar or the sequencer panel
-- Default project includes a drum track on track 2
 
 ### Velocity
-- Notes store **velocity** (0–1) which controls playback and export volume
+- Notes store **velocity** (0–1), which controls level *and* tone on playback and export
 - **Virtual piano:** click lower on a key = louder; **Shift** = accent, **Alt** = soft on keyboard
-- **Drum sequencer:** normal hits vs shift-accent hits
+- **Phone/tablet:** strike position, pressure, optional tap strength (see above)
+- **Velocity curve** setting (📱 Remote window) for light or heavy touch
 - Recording captures velocity automatically
 
 ### DJ Tools (🎛 DJ)
-GarageBand-style mix effects for the **master bus** and **each track**:
-- **Distance / underwater** — muffled, far-away sound (auto low-pass + reverb)
-- **Reverb** — space and depth
-- **Phaser swirl** — phase movement (fade in/out character)
-- **Brightness** — manual low-pass filter
+Mix effects for the **master bus** and **each track**:
+- **Distance / underwater:** muffled, far-away sound (auto low-pass + reverb)
+- **Reverb:** space and depth
+- **Phaser swirl:** phase movement (fade in/out character)
+- **Brightness:** manual low-pass filter
 
 Effects apply live on the master output; per-track effects apply fully on **WAV export** and partially during live playback.
 
 ### Timeline & Piano Roll
 
-The main view is split into two sections:
-
-**Timeline (top)** — one row per track:
+**Timeline (top)**, one row per track:
 - Click a row to select that track
 - Click anywhere on a row's grid to set the playhead (where recording starts)
-- Notes appear as small blocks whose height reflects pitch — a high-level overview of each track's shape
+- Notes appear as small blocks whose height reflects pitch
 - The red vertical line is the playhead, shared across all tracks
-- Selected track is highlighted with a colored border
 
-**Piano Roll (bottom)** — detailed editor for the selected track:
-- Vertical piano keys on the left (C3–B5)
-- Full note grid with pitch-by-pitch detail
-- Click the grid to place notes, or use the virtual piano while recording
+**Piano Roll (bottom)**, the detailed editor for the selected track:
+- Vertical piano keys on the left
+- Click the grid to place notes, or use the virtual piano / phone while recording
 
-### Multi-Track
-- Add unlimited tracks via the sidebar
-- Per-track volume, mute, and instrument selection
-- Master volume control
-
-### Transport
-- **Play / Pause** — playback with playhead
-- **Stop** — reset playhead to start
-- **Record** — notes played on the piano are recorded to the current track at the playhead
-- **BPM** slider (40–240)
-- **Time signature** — adjustable numerator and denominator (2/4, 4/4, 8/8, etc.)
-
-### Composition Assistant (🎼 Compose panel)
-- **Key detection** — analyzes notes across all tracks
-- **Chord progression suggestions** — pop, jazz, and minor-key progressions
-- Click a chord button to insert it at the playhead
-- **Interactive Circle of Fifths** — click keys to learn relationships
-- Educational collapsible section explaining the circle of fifths
-
-### AI Instrument Designer (✨ AI Instrument)
-1. Select a **base instrument** from the library (uses its cached waveform sample)
-2. Describe how you want it to sound
-3. **Generate** → preview → **Save to Library**
-4. Saved custom instruments appear in the track instrument picker
-
-Currently uses local keyword analysis to map descriptions onto base samples. Cloud LLM integration is planned (see TODO).
+### Multi-Track, Transport, Composition
+- Unlimited tracks; per-track volume, mute, instrument
+- Play / Pause / Stop / Record, BPM (40–240), time signature
+- **🎼 Compose:** key detection, chord progression suggestions, interactive circle of fifths
 
 ### Save, Load & Export
-- **💾 Save Project** — saves all tracks, notes, BPM, time signature, and custom instruments to a `.rac.json` file
-- **📂 Load Project** — restores a saved project
-- **🎵 Export WAV** — renders the full composition to a WAV audio file
-
-## Running
-
-From the project directory:
-
-```bash
-cd rust-audio-composer
-cargo run
-```
-
-The first build can take a minute or two; later runs are much faster.
-
-**Requirements:** a working audio output device (speakers or headphones). On macOS the app uses CoreAudio automatically.
+- **💾 Save Project** / **📂 Load Project** (`.rac.json`, includes custom instruments)
+- **🎵 Export WAV** renders the full composition
 
 ### Quick tour
 
-Once the app opens, open **📖 Guide** in the transport bar for an in-app user guide, or use the table below:
+Open **📖 Guide** in the transport bar for the in-app guide.
 
 | Button | What it does |
 |--------|--------------|
-| **🎹 Piano** | Open the virtual keyboard to play notes |
+| **🎹 Piano** | On-screen keyboard |
+| **📱 Remote** | Play from iPhone/iPad over Wi-Fi |
 | **⏺ Record** | Record what you play onto the selected track |
 | **▶ Play** | Play back your composition |
 | **🎼 Compose** | Key detection, chord suggestions, circle of fifths |
-| **✨ AI Instrument** | Create custom instruments from text descriptions |
-| **🥁 Drums** | Beat sequencer with live preview and record-to-timeline |
-| **📖 Guide** | In-app user guide (workflow, shortcuts, panels) |
+| **✨ Sound Designer** | Describe and shape your own instruments |
+| **🥁 Drums** | Beat sequencer |
+| **🎛 DJ** | Mix effects |
 | **⚙ Options** | Interface font and help display |
-
-Select a track in the timeline rows, click to set the playhead, enable **⏺ Record**, then play on the piano to capture a section.
-
-If you hit a compile error or no sound, check the terminal output for errors and ensure your audio device is connected and not muted.
-
-## Project Structure
-
-```
-src/
-  main.rs              # Entry point
-  app.rs               # Main DAW state and playback logic
-  model/               # Project, tracks, notes, instruments
-  audio/               # Polyphonic synth engine (cpal)
-  music/               # Music theory: keys, chords, circle of fifths
-  ai/                  # Instrument description → synth params
-  ui/
-    transport.rs       # Play/stop/record, BPM, time sig
-    track_panel.rs     # Multi-track sidebar
-    piano.rs           # Virtual piano window
-    piano_roll.rs      # Timeline with vertical piano keys
-    composition.rs     # Key detection, chord suggestions, circle of fifths
-    instrument_designer.rs  # AI instrument creator
-```
 
 ## Keyboard Shortcuts (Piano Window)
 
@@ -161,19 +187,58 @@ src/
 | M | C4 |
 | J | C#4 |
 
+## Architecture
+
+```
+ iPhone / iPad (Safari, no install)               Your computer (one Rust program)
+ ┌──────────────────────────────┐   local Wi-Fi  ┌───────────────────────────────────────┐
+ │ web keyboard served by the   │──WebSocket────▶│ network thread ──▶ audio engine ──▶ 🔊 │
+ │ desktop app: touch → velocity│  (no internet) │        └──▶ UI (record, highlight)     │
+ └──────────────────────────────┘                │ native GPU-rendered UI (egui)         │
+                                                 └───────────────────────────────────────┘
+```
+
+- **The desktop UI is native Rust.** It's custom-drawn and GPU-accelerated (egui/wgpu), with no web view or Electron. That keeps startup fast, memory low and frame times steady while the audio runs.
+- **Audio** goes through `cpal` (WASAPI on Windows, CoreAudio on macOS, ALSA on Linux). Voices are rendered sample by sample in Rust; there are no garbage-collection pauses to cause clicks.
+- **Remote keyboard:** `tokio` + `axum` WebSocket server (with `TCP_NODELAY`), and optional HTTPS through `rustls` with a locally generated certificate. The phone client is plain HTML/JS compiled into the binary.
+
+## Project Structure
+
+```
+src/
+  main.rs                # Entry point
+  app.rs                 # DAW state, playback, recording, remote event handling
+  model/                 # Project, tracks, notes, instruments (genre presets, kits)
+  audio/
+    engine.rs            # Instrument routing, live input, velocity curves
+    synth.rs             # Voices: sample playback (velocity layers), drums, sustain pedal
+    genre_synth.rs       # Real-time synth presets (808, Reese, Rhodes, strings…)
+    drum_kits.rs         # Synthesized genre drum kits
+    multisample.rs       # Multi-zone, multi-velocity sampled instruments (background download)
+    samples.rs           # Sample download/decode/cache
+  remote/
+    mod.rs               # LAN server: WebSocket → audio engine
+    protocol.rs          # Message types, multi-device keyboard layout
+    tls.rs               # Optional HTTPS (local certificate authority)
+    web/                 # Phone/tablet client (HTML/CSS/JS, embedded)
+  music/                 # Music theory: keys, chords, circle of fifths
+  ai/                    # Natural-language timbre interpreter
+  ui/                    # Transport, tracks, piano, piano roll, designer, remote panel…
+```
+
 ## Roadmap / TODO
 
-See [TODO.md](TODO.md) for planned features including:
-- iPad/mobile interface for playing and uploading recordings
-- Cloud AI integration for richer instrument design
-- MIDI file import/export
-- Sample-based instruments
-- Undo/redo
-- Project save/load
+See [TODO.md](TODO.md). Highlights:
+- Lower-latency audio (buffer-size setting, exclusive mode, lock-free note queue)
+- MIDI in/out, so external keyboards work and phones can control other software
+- Native iOS app with Bluetooth MIDI (playing without Wi-Fi)
+- Undo/redo, MIDI file import/export
 
 ## Tech Stack
 
 - **Rust** 2021 edition
-- **eframe / egui** — cross-platform GUI
-- **cpal** — cross-platform audio I/O
-- **serde** — serialization (for future project save)
+- **eframe / egui** for the native, GPU-accelerated desktop UI
+- **cpal** for cross-platform audio I/O
+- **tokio / axum / rustls / rcgen** for the local-network remote keyboard
+- **hound / claxon** for WAV and FLAC decoding
+- **serde** for project files and the wire protocol

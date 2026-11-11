@@ -42,6 +42,17 @@ pub fn show_transport(app: &mut DAWApp, ui: &mut Ui) {
         }
 
         if ui
+            .selectable_label(app.show_remote, "📱 Remote")
+            .on_hover_text("Play from your iPhone / iPad over Wi-Fi")
+            .clicked()
+        {
+            app.show_remote = !app.show_remote;
+            if app.show_remote {
+                app.start_remote();
+            }
+        }
+
+        if ui
             .selectable_label(app.show_composition, "🎼 Compose")
             .clicked()
         {
@@ -49,7 +60,7 @@ pub fn show_transport(app: &mut DAWApp, ui: &mut Ui) {
         }
 
         if ui
-            .selectable_label(app.show_instrument_designer, "✨ AI Instrument")
+            .selectable_label(app.show_instrument_designer, "✨ Sound Designer")
             .clicked()
         {
             app.show_instrument_designer = !app.show_instrument_designer;

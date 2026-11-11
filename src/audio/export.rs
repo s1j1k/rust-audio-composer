@@ -2,7 +2,7 @@ use crate::audio::effects::EffectProcessor;
 use crate::audio::synth::SynthEngine;
 use crate::model::drum::DrumKind;
 use crate::model::effects::MasterEffects;
-use crate::model::instrument::{CustomInstrument, InstrumentProfile};
+use crate::model::instrument::{CustomInstrument, InstrumentId, InstrumentProfile};
 use crate::model::Project;
 use std::collections::{HashMap, HashSet};
 
@@ -104,8 +104,17 @@ fn render_track_buffer(
                 synth.note_off(pitch);
                 active.remove(&pitch);
             } else if is_drum {
-                if let Some(kind) = DrumKind::from_midi_pitch(pitch) {
-                    synth.drum_hit(kind, vel);
+                match &track.instrument {
+                    InstrumentId::Kit(kit) => {
+                        if let Some(kind) = crate::audio::engine::drum_for_pitch(pitch) {
+                            synth.kit_hit(*kit, kind, vel);
+                        }
+                    }
+                    _ => {
+                        if let Some(kind) = DrumKind::from_midi_pitch(pitch) {
+                            synth.drum_hit(kind, vel);
+                        }
+                    }
                 }
             } else if active.insert(pitch) {
                 let mut p = params.clone();

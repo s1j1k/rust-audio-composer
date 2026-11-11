@@ -22,6 +22,18 @@ pub struct SampleLibrary {
 const SAMPLE_MANIFEST_VERSION: &str = "freepats-cc0-v1";
 
 impl SampleLibrary {
+    /// One decoded library per sample rate, shared by every engine instance.
+    pub fn shared(sample_rate: f32) -> Arc<SampleLibrary> {
+        use std::sync::{Mutex, OnceLock};
+        static CACHE: OnceLock<Mutex<std::collections::HashMap<u32, Arc<SampleLibrary>>>> =
+            OnceLock::new();
+        let cache = CACHE.get_or_init(|| Mutex::new(std::collections::HashMap::new()));
+        let mut map = cache.lock().unwrap_or_else(|e| e.into_inner());
+        map.entry(sample_rate as u32)
+            .or_insert_with(|| Arc::new(SampleLibrary::new(sample_rate)))
+            .clone()
+    }
+
     pub fn new(sample_rate: f32) -> Self {
         let cache_dir = sample_cache_dir();
         let _ = fs::create_dir_all(&cache_dir);
@@ -55,8 +67,10 @@ impl SampleLibrary {
         let cache_wav = cache_dir.join(format!("{}.foss.wav", kind.label().to_lowercase()));
         let attribution_path = cache_dir.join(format!("{}.attribution.txt", kind.label().to_lowercase()));
 
-        if let Ok(data) = load_wav_f32(&cache_wav) {
+        if let Ok((data, rate)) = load_wav_with_rate(&cache_wav) {
             if data.len() > 256 {
+                // The cache may have been written at another device sample rate.
+                let data = resample(&data, rate, target_rate);
                 return InstrumentSample {
                     data: Arc::new(data),
                     root_midi: source.root_midi,
@@ -169,6 +183,13 @@ fn download_bytes(url: &str) -> Option<Vec<u8>> {
 }
 
 fn decode_sample(bytes: &[u8], format: SampleFileFormat) -> Option<(Vec<f32>, f32)> {
+    let (mono, rate) = decode_sample_raw(bytes, format)?;
+    Some((normalize(mono), rate))
+}
+
+/// Decode WAV (16/24/32-bit int or float) or FLAC to mono **without** normalising,
+/// so relative levels between velocity layers survive.
+pub fn decode_sample_raw(bytes: &[u8], format: SampleFileFormat) -> Option<(Vec<f32>, f32)> {
     match format {
         SampleFileFormat::Wav => {
             let mut reader = hound::WavReader::new(Cursor::new(bytes)).ok()?;
@@ -179,13 +200,17 @@ fn decode_sample(bytes: &[u8], format: SampleFileFormat) -> Option<(Vec<f32>, f3
                     .into_samples::<f32>()
                     .filter_map(|s| s.ok())
                     .collect(),
-                hound::SampleFormat::Int => reader
-                    .samples::<i16>()
-                    .filter_map(|s| s.ok())
-                    .map(|v| v as f32 / i16::MAX as f32)
-                    .collect(),
+                hound::SampleFormat::Int => {
+                    let bits = reader.spec().bits_per_sample.clamp(8, 32);
+                    let scale = (1i64 << (bits - 1)) as f32;
+                    reader
+                        .samples::<i32>()
+                        .filter_map(|s| s.ok())
+                        .map(|v| v as f32 / scale)
+                        .collect()
+                }
             };
-            Some((mix_to_mono(raw, channels), rate))
+            Some((downmix(raw, channels), rate))
         }
         SampleFileFormat::Flac => {
             let mut reader = claxon::FlacReader::new(Cursor::new(bytes)).ok()?;
@@ -198,24 +223,28 @@ fn decode_sample(bytes: &[u8], format: SampleFileFormat) -> Option<(Vec<f32>, f3
                 .filter_map(|s| s.ok())
                 .map(|sample| sample as f32 / scale)
                 .collect();
-            Some((mix_to_mono(raw, channels), rate))
+            Some((downmix(raw, channels), rate))
         }
     }
 }
 
 fn mix_to_mono(interleaved: Vec<f32>, channels: usize) -> Vec<f32> {
+    normalize(downmix(interleaved, channels))
+}
+
+fn downmix(interleaved: Vec<f32>, channels: usize) -> Vec<f32> {
     if channels <= 1 {
-        return normalize(interleaved);
+        return interleaved;
     }
     let mut mono = Vec::with_capacity(interleaved.len() / channels);
     for chunk in interleaved.chunks(channels) {
         let sum: f32 = chunk.iter().sum();
         mono.push(sum / channels as f32);
     }
-    normalize(mono)
+    mono
 }
 
-fn resample(data: &[f32], from_rate: f32, to_rate: f32) -> Vec<f32> {
+pub fn resample(data: &[f32], from_rate: f32, to_rate: f32) -> Vec<f32> {
     if (from_rate - to_rate).abs() < 1.0 || data.is_empty() {
         return data.to_vec();
     }
@@ -235,6 +264,10 @@ fn resample(data: &[f32], from_rate: f32, to_rate: f32) -> Vec<f32> {
 
 fn midi_to_hz(midi: u8) -> f32 {
     440.0 * 2.0_f32.powf((midi as f32 - 69.0) / 12.0)
+}
+
+pub fn home_dir() -> PathBuf {
+    dirs_fallback()
 }
 
 fn sample_cache_dir() -> PathBuf {
@@ -260,6 +293,7 @@ pub fn generate_sample(kind: SampleKind, sample_rate: f32) -> Vec<f32> {
         SampleKind::Brass => gen_brass(sample_rate),
         SampleKind::Organ => gen_organ(sample_rate),
         SampleKind::Pad => gen_pad(sample_rate),
+        SampleKind::Harp => karplus_strong(261.63, sample_rate, 0.998, 2.5),
     }
 }
 
@@ -430,6 +464,20 @@ pub fn load_wav_f32(path: &Path) -> Result<Vec<f32>, String> {
         .map(|s| s.map(|v| v as f32 / i16::MAX as f32))
         .collect();
     Ok(mix_to_mono(raw.map_err(|e| e.to_string())?, channels))
+}
+
+/// Load a cached 16-bit WAV, returning its samples (not normalised) and sample rate.
+pub fn load_wav_with_rate(path: &Path) -> Result<(Vec<f32>, f32), String> {
+    let mut reader = hound::WavReader::open(path).map_err(|e| e.to_string())?;
+    let spec = reader.spec();
+    let raw: Result<Vec<f32>, _> = reader
+        .samples::<i16>()
+        .map(|s| s.map(|v| v as f32 / i16::MAX as f32))
+        .collect();
+    Ok((
+        downmix(raw.map_err(|e| e.to_string())?, spec.channels as usize),
+        spec.sample_rate as f32,
+    ))
 }
 
 #[cfg(test)]

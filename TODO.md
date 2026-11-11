@@ -9,12 +9,13 @@
 
 ## Mobile / iPad Interface
 
-- [ ] **Mobile companion app** — iPad app to play virtual instruments remotely
-- [ ] **Network sync** — upload recordings from iPad to desktop DAW over Wi-Fi
-- [ ] **Touch-optimized piano** — multi-touch polyphonic keyboard for iPad
-- [ ] **Shared project format** — common JSON/MIDI format between desktop and mobile
-
-The desktop app is the primary target for now. Mobile is documented here as a future milestone.
+- [x] **Remote keyboard (MVP)** — iPhone/iPad web app served by the desktop over local Wi-Fi, WebSocket straight into the audio engine
+- [x] **Touch-optimized piano** — multi-touch, glissando, sustain pedal, strike-position velocity, slide-for-pressure, optional accelerometer tap strength (HTTPS)
+- [x] **Chain several devices into one long keyboard** (v1: uniform key size, manual ordering)
+- [ ] Physical-size calibration across iPhone/iPad models; bezel compensation
+- [ ] WebRTC DataChannel transport (LAN-only P2P) and A/B latency measurement
+- [ ] Native iOS app (cloud-built) with Bluetooth LE MIDI for Wi-Fi-free playing
+- [ ] Show the playhead / tempo on the phone; upload recordings from iPad
 
 ## AI / Composition
 
@@ -25,7 +26,8 @@ The desktop app is the primary target for now. Mobile is documented here as a fu
 
 ## Audio Engine
 
-- [ ] **Sample-based instruments** — load WAV/FLAC samples for realistic piano/guitar
+- [x] **Sample-based instruments** — multi-velocity piano and harp (CC0), genre synth presets and drum kits
+- [ ] **Lower latency** — audio buffer-size setting, exclusive mode/ASIO, lock-free note queue into the audio thread
 - [ ] **Effects chain** — reverb, delay, EQ per track
 - [ ] **Audio export** — render project to WAV/MP3
 - [ ] **MIDI input** — support external MIDI keyboards via midir crate

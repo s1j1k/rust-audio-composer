@@ -3,6 +3,7 @@ mod app;
 mod audio;
 mod model;
 mod music;
+mod remote;
 mod ui;
 
 use app::DAWApp;

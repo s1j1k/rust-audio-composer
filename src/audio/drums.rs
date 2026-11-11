@@ -1,5 +1,5 @@
 use crate::audio::drum_sources::{self, DrumSource};
-use crate::audio::samples::{decode_bytes_to_mono, fetch_url_bytes, load_wav_f32, save_wav_f32};
+use crate::audio::samples::{decode_bytes_to_mono, fetch_url_bytes, load_wav_with_rate, resample, save_wav_f32};
 use crate::model::drum::DrumKind;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -18,6 +18,18 @@ pub struct DrumLibrary {
 }
 
 impl DrumLibrary {
+    /// One decoded kit per sample rate, shared by every engine instance.
+    pub fn shared(sample_rate: f32) -> Arc<DrumLibrary> {
+        use std::sync::{Mutex, OnceLock};
+        static CACHE: OnceLock<Mutex<std::collections::HashMap<u32, Arc<DrumLibrary>>>> =
+            OnceLock::new();
+        let cache = CACHE.get_or_init(|| Mutex::new(std::collections::HashMap::new()));
+        let mut map = cache.lock().unwrap_or_else(|e| e.into_inner());
+        map.entry(sample_rate as u32)
+            .or_insert_with(|| Arc::new(DrumLibrary::new(sample_rate)))
+            .clone()
+    }
+
     pub fn new(sample_rate: f32) -> Self {
         let cache_dir = drum_cache_dir();
         let _ = fs::create_dir_all(&cache_dir);
@@ -45,10 +57,10 @@ fn load_or_fetch(
     let cache_wav = cache_dir.join(format!("{}.foss.wav", name));
     let attribution_path = cache_dir.join(format!("{}.attribution.txt", name));
 
-    if let Ok(data) = load_wav_f32(&cache_wav) {
+    if let Ok((data, rate)) = load_wav_with_rate(&cache_wav) {
         if data.len() > 64 {
             return DrumSample {
-                data: Arc::new(data),
+                data: Arc::new(resample(&data, rate, target_rate)),
                 from_foss: true,
             };
         }

@@ -102,4 +102,13 @@ const ALL_SOURCES: &[SampleSource] = &[
         attribution: "Sweep Pad — FreePats (roberto@zenvoid.org), ZynAddSubFX/Yoshimi",
         project_url: "https://github.com/freepats/sweep-pad",
     },
+    SampleSource {
+        kind: SampleKind::Harp,
+        url: "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Composite%20Chordophones/Concert%20Harp/KSHarp_C5_mf1.wav",
+        format: SampleFileFormat::Wav,
+        root_midi: 72,
+        license: "CC0-1.0",
+        attribution: "Concert Harp — Versilian Community Sample Library (VCSL), Versilian Studios / Sam Gossner",
+        project_url: "https://github.com/sgossner/VCSL",
+    },
 ];
