@@ -2,7 +2,7 @@ use crate::app::DAWApp;
 use egui::Ui;
 
 pub fn show_dj_panel(app: &mut DAWApp, ui: &mut Ui) {
-    ui.heading("🎛 DJ Tools");
+    ui.heading("DJ Tools");
     ui.label(
         "Mix effects for the whole song and individual tracks — distance, underwater muffling, \
          reverb, and phaser swirl (GarageBand-style).",

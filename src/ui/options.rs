@@ -32,6 +32,28 @@ pub fn show_options(app: &mut DAWApp, ui: &mut Ui, ctx: &Context) {
     }
 
     ui.add_space(8.0);
+    ui.horizontal(|ui| {
+        ui.label("Interface size");
+        hints::bubble(
+            ui,
+            "options_ui_scale",
+            "Scales all text and controls. Ctrl + / Ctrl − / Ctrl 0 also work anywhere.",
+        );
+    });
+    let mut scale = ctx.zoom_factor();
+    ui.horizontal(|ui| {
+        if ui
+            .add(egui::Slider::new(&mut scale, 0.7..=1.5).custom_formatter(|v, _| format!("{:.0}%", v * 100.0)))
+            .changed()
+        {
+            ctx.set_zoom_factor(scale);
+        }
+        if ui.small_button("Reset").clicked() {
+            ctx.set_zoom_factor(theme::DEFAULT_UI_SCALE);
+        }
+    });
+
+    ui.add_space(8.0);
     ui.separator();
     ui.horizontal(|ui| {
         ui.label("Inline help");

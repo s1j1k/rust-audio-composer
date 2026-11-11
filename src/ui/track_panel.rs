@@ -148,7 +148,6 @@ pub fn show_track_panel(app: &mut DAWApp, ui: &mut Ui) {
             app.project.add_drum_track();
             app.current_track = app.project.tracks.len() - 1;
             app.sync_instrument_to_track();
-            app.show_drum_sequencer = true;
             app.open_drum_sequencer();
         }
     });

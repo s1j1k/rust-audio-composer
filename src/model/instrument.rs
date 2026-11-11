@@ -266,11 +266,11 @@ impl InstrumentId {
             Self::Brass => "🎺",
             Self::Organ => "🎹",
             Self::Pad => "🌊",
-            Self::Drums => "🥁",
+            Self::Drums => "♪",
             Self::Custom(_) => "✨",
             Self::Harp => "🪕",
             Self::Preset(p) => p.icon(),
-            Self::Kit(_) => "🥁",
+            Self::Kit(_) => "♪",
         }
     }
 

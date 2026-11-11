@@ -21,6 +21,7 @@ fn main() -> Result<(), eframe::Error> {
         options,
         Box::new(|cc| {
             ui::theme::apply(&cc.egui_ctx, ui::theme::UiFontFamily::default());
+            cc.egui_ctx.set_zoom_factor(ui::theme::DEFAULT_UI_SCALE);
             Ok(Box::new(DAWApp::default()))
         }),
     )

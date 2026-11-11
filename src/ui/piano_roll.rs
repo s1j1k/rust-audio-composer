@@ -25,20 +25,110 @@ pub fn show_piano_roll_detail(app: &mut DAWApp, ui: &mut Ui) {
         .unwrap_or(false);
 
     ui.separator();
+
+    // The bottom panel is one place with switchable views of the selected track:
+    // melodic → Piano roll | Virtual piano; drums → Step sequencer | Drum roll | Virtual piano.
+    // Sequencer and piano can also be popped out into their own windows.
+    #[derive(PartialEq, Clone, Copy)]
+    enum View {
+        Editor,
+        Sequencer,
+        Keyboard,
+    }
+    let current = if app.bottom_keyboard {
+        View::Keyboard
+    } else if is_drum && app.drum_view_sequencer && !app.sequencer_popped_out {
+        View::Sequencer
+    } else {
+        View::Editor
+    };
     ui.horizontal(|ui| {
-        ui.heading(if is_drum { "Drum Roll" } else { "Piano Roll" });
-        ui.label(format!(
-            "— {}",
-            app.project
-                .tracks
-                .get(app.current_track)
-                .map(|t| t.name.as_str())
-                .unwrap_or("No track")
-        ));
+        ui.label(
+            egui::RichText::new(
+                app.project
+                    .tracks
+                    .get(app.current_track)
+                    .map(|t| t.name.as_str())
+                    .unwrap_or("No track"),
+            )
+            .strong(),
+        );
+        ui.separator();
+        let mut view = current;
+        if is_drum {
+            ui.selectable_value(&mut view, View::Sequencer, "Step sequencer");
+            ui.selectable_value(&mut view, View::Editor, "Drum roll");
+        } else {
+            ui.selectable_value(&mut view, View::Editor, "Piano roll");
+        }
+        ui.selectable_value(&mut view, View::Keyboard, "Virtual piano");
+        if view != current {
+            app.bottom_keyboard = view == View::Keyboard;
+            if view == View::Keyboard {
+                app.show_piano = false; // docking it here replaces the pop-out
+            }
+            if is_drum && view != View::Keyboard {
+                app.drum_view_sequencer = view == View::Sequencer;
+                if view == View::Sequencer {
+                    app.sequencer_popped_out = false;
+                }
+            }
+            app.sync_sequencer_visibility();
+        }
+
+        ui.separator();
+        match current {
+            View::Keyboard => {
+                if ui.small_button("Pop out").on_hover_text("Open the virtual piano in its own window").clicked() {
+                    app.show_piano = true;
+                    app.bottom_keyboard = false;
+                    app.sync_sequencer_visibility();
+                }
+            }
+            View::Sequencer => {
+                if ui.small_button("Pop out").on_hover_text("Open the sequencer in its own window").clicked() {
+                    app.sequencer_popped_out = true;
+                }
+            }
+            View::Editor => {}
+        }
+        if app.show_piano
+            && ui.small_button("Dock piano").on_hover_text("Bring the virtual piano back into this panel").clicked()
+        {
+            app.show_piano = false;
+            app.bottom_keyboard = true;
+            app.sync_sequencer_visibility();
+        }
+        if is_drum && app.sequencer_popped_out
+            && ui.small_button("Dock sequencer").on_hover_text("Bring the sequencer back into this panel").clicked()
+        {
+            app.sequencer_popped_out = false;
+            app.drum_view_sequencer = true;
+            app.bottom_keyboard = false;
+            app.sync_sequencer_visibility();
+        }
         if app.recording {
             ui.colored_label(Color32::from_rgb(255, 60, 60), "⏺ Recording");
         }
     });
+
+    if current == View::Keyboard {
+        egui::ScrollArea::vertical()
+            .id_salt("docked_piano")
+            .auto_shrink([false, false])
+            .max_height(ui.available_height().max(120.0))
+            .show(ui, |ui| crate::ui::show_piano_body(app, ui, true));
+        return;
+    }
+
+    if current == View::Sequencer {
+        egui::ScrollArea::both()
+            .id_salt("docked_sequencer")
+            .auto_shrink([false, false])
+            .max_height(ui.available_height().max(120.0))
+            .show(ui, |ui| crate::ui::show_drum_sequencer_body(app, ui));
+        return;
+    }
 
     show_zoom_controls(app, ui, "piano_roll_zoom");
     ui.label(
@@ -85,6 +175,11 @@ fn visible_pitch_rows(height: f32) -> u8 {
     (height / PIANO_ROW_HEIGHT).floor().max(1.0) as u8
 }
 
+/// How many pitch rows the melodic roll shows.
+pub fn visible_pitch_count() -> u8 {
+    visible_pitch_rows(piano_roll_panel_height())
+}
+
 fn handle_pitch_scroll(app: &mut DAWApp, ui: &Ui, hovered: bool) {
     if !hovered {
         return;
@@ -118,7 +213,6 @@ fn show_melodic_roll(app: &mut DAWApp, ui: &mut Ui) {
             draw_melodic_key_labels(app, ui, panel_height, roll_low, roll_high);
         });
         ui.vertical(|ui| {
-            draw_grid_ruler(app, ui, grid_width, total_beats);
             draw_melodic_grid(
                 app,
                 ui,
@@ -148,7 +242,6 @@ fn show_drum_roll(app: &mut DAWApp, ui: &mut Ui) {
             draw_drum_key_labels(app, ui, key_height, drums);
         });
         ui.vertical(|ui| {
-            draw_grid_ruler(app, ui, grid_width, total_beats);
             draw_drum_grid(app, ui, grid_width, grid_height, total_beats, drums);
         });
     });
@@ -314,8 +407,11 @@ fn draw_melodic_key_labels(app: &mut DAWApp, ui: &mut Ui, height: f32, roll_low:
 
         let is_black = is_black_key(pitch);
         let pressed = app.held_notes.contains(&pitch);
+        let remote = app.remote_held.contains_key(&pitch);
         let fill = if pressed {
             Color32::from_rgb(140, 170, 255)
+        } else if remote {
+            Color32::from_rgb(110, 220, 140)
         } else if is_black {
             Color32::from_rgb(28, 28, 34)
         } else {
@@ -351,7 +447,7 @@ fn draw_melodic_key_labels(app: &mut DAWApp, ui: &mut Ui, height: f32, roll_low:
                 };
                 app.play_note_with_velocity(pitch, vel);
             }
-        } else if app.held_notes.contains(&pitch) {
+        } else if app.held_notes.contains(&pitch) && !app.keyboard_held_notes.contains(&pitch) {
             app.release_note(pitch);
         }
     }
@@ -378,11 +474,16 @@ fn draw_drum_key_labels(app: &mut DAWApp, ui: &mut Ui, height: f32, drums: &[Dru
 
         painter.rect_filled(key_rect, 3.0, fill);
         painter.rect_stroke(key_rect, 3.0, egui::Stroke::new(1.0_f32, Color32::from_gray(100)));
+        let icon = Rect::from_min_size(
+            key_rect.min + Vec2::new(2.0, 0.0),
+            Vec2::splat(key_rect.height()),
+        );
+        crate::ui::drum_icons::paint_drum_icon(&painter, icon, drum, Color32::from_rgb(255, 190, 120));
         painter.text(
-            key_rect.left_center() + Vec2::new(4.0, 0.0),
+            egui::pos2(icon.max.x + 3.0, key_rect.center().y),
             egui::Align2::LEFT_CENTER,
-            format!("{} {}", drum.icon(), drum.label()),
-            theme::font(theme::FONT_LG),
+            drum.label(),
+            theme::font(theme::FONT_MD),
             Color32::WHITE,
         );
 
@@ -403,6 +504,7 @@ fn draw_drum_key_labels(app: &mut DAWApp, ui: &mut Ui, height: f32, drums: &[Dru
     }
 }
 
+
 fn draw_melodic_grid(
     app: &mut DAWApp,
     ui: &mut Ui,
@@ -420,8 +522,10 @@ fn draw_melodic_grid(
 
     egui::ScrollArea::horizontal()
         .auto_shrink([false, false])
-        .max_height(panel_height)
+        .max_height(panel_height + RULER_HEIGHT + ui.spacing().item_spacing.y)
         .show(ui, |ui| {
+            // Ruler inside the scroll area so bar numbers stay aligned with the grid.
+            draw_grid_ruler(app, ui, grid_width, total_beats);
             let (rect, response) =
                 ui.allocate_exact_size(Vec2::new(grid_width, grid_height), Sense::click());
             app.piano_roll_grid_rect = Some(rect);
@@ -433,6 +537,7 @@ fn draw_melodic_grid(
             draw_song_sections(app, &painter, rect, false);
             draw_beat_grid_lines(app, &painter, rect, total_beats);
             draw_melodic_pitch_rows(&painter, rect, grid_width, roll_low, roll_high, visible_rows);
+            draw_held_pitch_bands(app, &painter, rect, roll_high, visible_rows);
 
             draw_section_overlay(app, ui, &painter, rect, section_range);
             draw_melodic_notes(
@@ -466,8 +571,9 @@ fn draw_drum_grid(
 
     egui::ScrollArea::both()
         .auto_shrink([false, false])
-        .max_height(panel_height)
+        .max_height(panel_height + RULER_HEIGHT + ui.spacing().item_spacing.y)
         .show(ui, |ui| {
+            draw_grid_ruler(app, ui, grid_width, total_beats);
             let (rect, response) =
                 ui.allocate_exact_size(Vec2::new(grid_width, grid_height), Sense::click());
             app.piano_roll_grid_rect = Some(rect);
@@ -796,6 +902,31 @@ fn draw_melodic_pitch_rows(
     }
 }
 
+/// Light up the row of every note being held right now (blue = mouse/computer keyboard,
+/// green = phone/tablet), so you can see what you're playing against the grid.
+fn draw_held_pitch_bands(app: &DAWApp, painter: &egui::Painter, rect: Rect, roll_high: u8, visible_rows: u8) {
+    let local = app.held_notes.iter().map(|&p| (p, Color32::from_rgba_unmultiplied(120, 160, 255, 60)));
+    let remote = app
+        .remote_held
+        .keys()
+        .map(|&p| (p, Color32::from_rgba_unmultiplied(90, 220, 130, 60)));
+    for (pitch, color) in local.chain(remote) {
+        if pitch > roll_high {
+            continue;
+        }
+        let row = roll_high - pitch;
+        if row >= visible_rows {
+            continue;
+        }
+        let y = rect.min.y + row as f32 * PIANO_ROW_HEIGHT;
+        painter.rect_filled(
+            Rect::from_min_size(egui::pos2(rect.min.x, y), Vec2::new(rect.width(), PIANO_ROW_HEIGHT)),
+            0.0,
+            color,
+        );
+    }
+}
+
 fn draw_playhead(
     app: &mut DAWApp,
     ui: &mut Ui,
@@ -841,6 +972,17 @@ fn draw_playhead(
     if ph_response.dragged() || ph_response.clicked() {
         if let Some(pos) = ph_response.interact_pointer_pos() {
             app.set_playhead(beat_from_x(app, pos.x, rect.min.x));
+        }
+    }
+
+    // Follow the playhead while playing/recording.
+    if app.playing && !ph_response.dragged() {
+        let view = ui.clip_rect();
+        if playhead_x > view.max.x - 30.0 || playhead_x < view.min.x {
+            ui.scroll_to_rect(
+                Rect::from_min_size(egui::pos2(playhead_x - 40.0, rect.min.y), Vec2::new(1.0, 1.0)),
+                Some(egui::Align::Min),
+            );
         }
     }
 

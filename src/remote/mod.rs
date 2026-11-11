@@ -54,6 +54,8 @@ pub enum RemoteEvent {
     },
     SelectInstrument(String),
     SetCurve(VelocityCurve),
+    /// Phone REC button pressed: start (true) or stop (false) a take.
+    Record(bool),
     DevicesChanged,
 }
 
@@ -89,6 +91,8 @@ struct Settings {
     instruments: Vec<InstrumentChoice>,
     current: String,
     curve: VelocityCurve,
+    /// Last REC state sent to phones ("off" / "count" / "rec") and count-in beats left.
+    rec: (String, u32),
 }
 
 struct Shared {
@@ -210,6 +214,7 @@ impl RemoteServer {
                 instruments: Vec::new(),
                 current: String::new(),
                 curve,
+                rec: ("off".to_string(), 0),
             }),
             next_id: AtomicU64::new(1),
             ca_der,
@@ -364,6 +369,23 @@ impl RemoteServer {
         }
     }
 
+    /// Mirror the desktop's recording state on every phone's REC button (sent on change).
+    pub fn set_record_state(&self, state: &str, beats: u32) {
+        let changed = {
+            let mut s = self.shared.settings.lock().unwrap_or_else(|e| e.into_inner());
+            let new = (state.to_string(), beats);
+            let c = s.rec != new;
+            s.rec = new;
+            c
+        };
+        if changed {
+            self.shared.broadcast(&ServerMsg::Rec {
+                state: state.to_string(),
+                beats,
+            });
+        }
+    }
+
     pub fn chain(&self) -> (bool, u8) {
         let s = self.shared.settings.lock().unwrap_or_else(|e| e.into_inner());
         (s.chain, s.chain_start)
@@ -465,6 +487,13 @@ async fn handle_socket(socket: WebSocket, shared: Arc<Shared>, addr: SocketAddr)
                 current: s.current.clone(),
                 curve: s.curve.key().to_string(),
                 sustain,
+            }
+            .to_json(),
+        );
+        let _ = tx.send(
+            ServerMsg::Rec {
+                state: s.rec.0.clone(),
+                beats: s.rec.1,
             }
             .to_json(),
         );
@@ -580,6 +609,9 @@ async fn handle_socket(socket: WebSocket, shared: Arc<Shared>, addr: SocketAddr)
             }
             ClientMsg::Inst { name } => {
                 shared.send_event(RemoteEvent::SelectInstrument(name));
+            }
+            ClientMsg::Rec { on } => {
+                shared.send_event(RemoteEvent::Record(on));
             }
             ClientMsg::Curve { name } => {
                 if let Some(c) = VelocityCurve::from_key(&name) {

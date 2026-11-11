@@ -2,7 +2,8 @@ use crate::app::{ClipDragMode, ClipDragState, DAWApp};
 use crate::ui::constants::{TRACK_HEADER_WIDTH, TRACK_ROW_HEIGHT};
 use crate::ui::grid::{
     beat_from_x, beat_width, draw_beat_grid_lines, draw_song_sections, draw_time_ruler,
-    handle_zoom_scroll, section_color, show_zoom_controls, x_from_beat, RULER_HEIGHT,
+    handle_zoom_scroll, playhead_scrubber, section_color, show_zoom_controls, x_from_beat,
+    RULER_HEIGHT,
 };
 use crate::ui::theme;
 use egui::{Color32, CursorIcon, Rect, Sense, Ui, Vec2};
@@ -89,13 +90,10 @@ pub fn show_multi_track_timeline(app: &mut DAWApp, ui: &mut Ui) {
                     );
 
                     let selected = app.current_track == i;
+                    // Opaque colours only: a translucent tint lets the light theme's white
+                    // window background show through and washes out clips and loops.
                     let bg = if selected {
-                        Color32::from_rgba_unmultiplied(
-                            app.project.tracks[i].color[0],
-                            app.project.tracks[i].color[1],
-                            app.project.tracks[i].color[2],
-                            30,
-                        )
+                        blend(Color32::from_rgb(38, 38, 44), app.project.tracks[i].color, 0.18)
                     } else if i % 2 == 0 {
                         Color32::from_rgb(35, 35, 40)
                     } else {
@@ -140,14 +138,7 @@ pub fn show_multi_track_timeline(app: &mut DAWApp, ui: &mut Ui) {
                     }
                 }
 
-                let playhead_x = x_from_beat(app, app.project.playhead_beat, grid_rect.min.x);
-                painter.line_segment(
-                    [
-                        egui::pos2(playhead_x, grid_rect.min.y),
-                        egui::pos2(playhead_x, grid_rect.max.y),
-                    ],
-                    egui::Stroke::new(2.0_f32, Color32::from_rgb(255, 80, 80)),
-                );
+                playhead_scrubber(app, ui, ruler_rect, grid_rect, "timeline_playhead");
 
                 // Row dividers on the header column (same Y as grid rows).
                 let header_painter = ui.painter_at(left_rect);
@@ -251,7 +242,7 @@ fn draw_track_header_in_rect(app: &mut DAWApp, ui: &mut Ui, rect: Rect, index: u
     let clip_count = app.project.tracks[index].clips.len();
 
     let bg = if selected {
-        Color32::from_rgba_unmultiplied(track_color[0], track_color[1], track_color[2], 50)
+        blend(Color32::from_rgb(34, 34, 40), track_color, 0.28)
     } else if index % 2 == 0 {
         Color32::from_rgb(32, 32, 38)
     } else {
@@ -266,33 +257,51 @@ fn draw_track_header_in_rect(app: &mut DAWApp, ui: &mut Ui, rect: Rect, index: u
 
     let response = ui.interact(rect, ui.id().with(("track_header", index)), Sense::click());
 
-    ui.allocate_new_ui(
-        egui::UiBuilder::new().max_rect(rect.shrink(6.0)),
-        |ui| {
-            ui.vertical(|ui| {
-                ui.spacing_mut().item_spacing.y = 2.0;
-                ui.horizontal(|ui| {
-                    ui.colored_label(color, "●");
-                    if ui.selectable_label(selected, &track_name).clicked() {
-                        app.select_track(index);
-                    }
-                });
-                ui.horizontal(|ui| {
-                    if ui.checkbox(&mut muted, "M").changed() {
+    // Two lines: [● name ⏺ ..... M] then "instrument · n clips". Clipped to the row so a
+    // long name can never spill into the next track.
+    let inner = rect.shrink2(Vec2::new(8.0, 7.0));
+    ui.allocate_new_ui(egui::UiBuilder::new().max_rect(inner), |ui| {
+        ui.set_clip_rect(inner.intersect(ui.clip_rect()));
+        ui.vertical(|ui| {
+            ui.spacing_mut().item_spacing = Vec2::new(4.0, 3.0);
+            ui.horizontal(|ui| {
+                ui.colored_label(color, "●");
+                if ui
+                    .selectable_label(selected, egui::RichText::new(&track_name).strong())
+                    .clicked()
+                {
+                    app.select_track(index);
+                }
+                if recording {
+                    ui.colored_label(Color32::from_rgb(255, 60, 60), "⏺");
+                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let label = egui::RichText::new("M").small().strong();
+                    let mute = egui::Button::new(if muted {
+                        label.color(Color32::BLACK)
+                    } else {
+                        label
+                    })
+                    .fill(if muted {
+                        Color32::from_rgb(240, 190, 60)
+                    } else {
+                        Color32::from_rgb(55, 55, 64)
+                    })
+                    .min_size(Vec2::new(20.0, 16.0));
+                    if ui.add(mute).on_hover_text("Mute track").clicked() {
+                        muted = !muted;
                         app.project.tracks[index].muted = muted;
                     }
-                    if recording {
-                        ui.colored_label(Color32::from_rgb(255, 60, 60), "⏺");
-                    }
                 });
-                ui.label(
-                    egui::RichText::new(format!("{} · {} clip(s)", instrument_label, clip_count))
-                        .small()
-                        .color(Color32::GRAY),
-                );
             });
-        },
-    );
+            let clips = if clip_count == 1 { "1 clip".to_string() } else { format!("{clip_count} clips") };
+            ui.label(
+                egui::RichText::new(format!("{instrument_label} · {clips}"))
+                    .small()
+                    .color(Color32::GRAY),
+            );
+        });
+    });
 
     if response.clicked() {
         app.select_track(index);
@@ -337,6 +346,7 @@ fn draw_track_clips(
             egui::pos2(x1.max(x0 + 12.0), inner.max.y),
         );
 
+        let is_recording = app.recording && app.recording_clip == Some((track_index, clip_idx));
         let fill = if is_selected {
             Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 200)
         } else {
@@ -346,17 +356,23 @@ fn draw_track_clips(
         painter.rect_stroke(
             clip_rect,
             6.0,
-            egui::Stroke::new(
-                if is_selected { 2.0_f32 } else { 1.0_f32 },
-                if clip.loop_enabled {
-                    Color32::from_rgb(120, 230, 160)
-                } else {
-                    color.gamma_multiply(1.3)
-                },
-            ),
+            if is_recording {
+                egui::Stroke::new(2.5_f32, Color32::from_rgb(255, 70, 70))
+            } else {
+                egui::Stroke::new(
+                    if is_selected { 2.0_f32 } else { 1.0_f32 },
+                    if clip.loop_enabled {
+                        Color32::from_rgb(120, 230, 160)
+                    } else {
+                        color.gamma_multiply(1.3)
+                    },
+                )
+            },
         );
 
-        let label = if clip.loop_enabled {
+        let label = if is_recording {
+            format!("● REC {}", if app.recording_overdub { "overdub" } else { "" })
+        } else if clip.loop_enabled {
             format!("↻ {}", clip.name)
         } else {
             clip.name.clone()
@@ -374,21 +390,30 @@ fn draw_track_clips(
         if clip.loop_enabled {
             let loop_x1 = x_from_beat(app, clip.loop_end_beat, inner.min.x);
             if loop_x1 > x1 + 4.0 {
-                let loop_rect = Rect::from_min_max(
-                    egui::pos2(x1, inner.min.y + 2.0),
-                    egui::pos2(loop_x1, inner.max.y - 2.0),
-                );
-                painter.rect_filled(
-                    loop_rect,
-                    4.0,
-                    Color32::from_rgba_unmultiplied(80, 200, 120, 35),
-                );
+                // Each repeat is drawn as a dimmer copy of the bubble (opaque, so it reads
+                // on light and dark themes) with the same mini piano roll inside.
+                let one = (x1 - x0).max(4.0);
+                let dim = blend(Color32::from_rgb(38, 38, 44), [color.r(), color.g(), color.b()], 0.45);
+                let mut rx = x1;
+                let mut n = 0;
+                while rx < loop_x1 - 1.0 && n < 512 {
+                    let rep = Rect::from_min_max(
+                        egui::pos2(rx, inner.min.y + 1.0),
+                        egui::pos2((rx + one).min(loop_x1), inner.max.y - 1.0),
+                    );
+                    painter.rect_filled(rep, 5.0, dim);
+                    dashed_outline(painter, rep, Color32::from_rgb(140, 235, 170));
+                    let full = Rect::from_min_size(rep.min, Vec2::new(one, rep.height()));
+                    draw_clip_note_preview(&painter.with_clip_rect(rep), &clip, full, color);
+                    rx += one;
+                    n += 1;
+                }
                 painter.text(
-                    loop_rect.left_top() + Vec2::new(4.0, 2.0),
+                    egui::pos2(x1 + 6.0, inner.min.y + 4.0),
                     egui::Align2::LEFT_TOP,
-                    "loop",
+                    "↻ loop",
                     theme::font(theme::FONT_XS),
-                    Color32::from_rgb(120, 230, 160),
+                    Color32::from_rgb(160, 245, 190),
                 );
             }
         }
@@ -399,28 +424,61 @@ fn draw_track_clips(
     }
 }
 
+/// Opaque mix of `base` toward an RGB colour (`t` = 0 → base, 1 → colour).
+fn blend(base: Color32, rgb: [u8; 3], t: f32) -> Color32 {
+    let mix = |a: u8, b: u8| (a as f32 + (b as f32 - a as f32) * t).round() as u8;
+    Color32::from_rgb(mix(base.r(), rgb[0]), mix(base.g(), rgb[1]), mix(base.b(), rgb[2]))
+}
+
+fn dashed_outline(painter: &egui::Painter, r: Rect, color: Color32) {
+    let stroke = egui::Stroke::new(1.0, color);
+    let pts = [r.left_top(), r.right_top(), r.right_bottom(), r.left_bottom(), r.left_top()];
+    painter.extend(egui::Shape::dashed_line(&pts, stroke, 4.0, 3.0));
+}
+
+/// A miniature piano roll inside the bubble: x = time, y = pitch (high at the top),
+/// width = note length, brightness = velocity. Pitch range fits the clip's own notes.
 fn draw_clip_note_preview(
     painter: &egui::Painter,
     clip: &crate::model::NoteClip,
     clip_rect: Rect,
-    color: Color32,
+    _color: Color32,
 ) {
-    if clip.notes.is_empty() {
+    let visible: Vec<&crate::model::Note> =
+        clip.notes.iter().filter(|n| clip.note_is_visible(n)).collect();
+    if visible.is_empty() {
         return;
     }
-    let vis_len = clip.visible_length().max(0.01);
-    for note in &clip.notes {
-        if !clip.note_is_visible(note) {
-            continue;
-        }
-        let rel = (note.start_beat - clip.trim_start) / vis_len;
-        let nx = clip_rect.min.x + rel as f32 * clip_rect.width();
-        let bar_h = 4.0;
-        let ny = clip_rect.center().y - bar_h * 0.5;
+    // Below the name label, with a little padding.
+    let area = Rect::from_min_max(
+        egui::pos2(clip_rect.min.x + 3.0, clip_rect.min.y + 17.0),
+        egui::pos2(clip_rect.max.x - 3.0, clip_rect.max.y - 3.0),
+    );
+    if area.height() < 4.0 || area.width() < 4.0 {
+        return;
+    }
+    let lo = visible.iter().map(|n| n.pitch).min().unwrap_or(60) as f32;
+    let hi = visible.iter().map(|n| n.pitch).max().unwrap_or(60) as f32;
+    // At least an octave of range so a single repeated note sits mid-height.
+    let span = (hi - lo).max(12.0);
+    let mid = (hi + lo) * 0.5;
+    let (lo, hi) = (mid - span * 0.5, mid + span * 0.5);
+    let row_h = (area.height() / (span + 1.0)).clamp(1.5, 4.0);
+    let vis_len = clip.visible_length().max(0.01) as f32;
+    let painter = painter.with_clip_rect(area.intersect(painter.clip_rect()));
+
+    for note in visible {
+        let t0 = (note.start_beat - clip.trim_start) as f32 / vis_len;
+        let t1 = (note.end_beat() - clip.trim_start) as f32 / vis_len;
+        let x0 = area.min.x + t0 * area.width();
+        let x1 = (area.min.x + t1 * area.width()).max(x0 + 2.0);
+        let y_frac = (hi - note.pitch as f32) / (hi - lo).max(1.0);
+        let y = area.min.y + y_frac * (area.height() - row_h);
+        let alpha = (120.0 + 135.0 * note.velocity.clamp(0.0, 1.0)) as u8;
         painter.rect_filled(
-            Rect::from_min_size(egui::pos2(nx, ny), Vec2::new(3.0, bar_h)),
+            Rect::from_min_max(egui::pos2(x0, y), egui::pos2(x1, y + row_h)),
             1.0,
-            color.gamma_multiply(0.7),
+            Color32::from_rgba_unmultiplied(255, 255, 255, alpha),
         );
     }
 }

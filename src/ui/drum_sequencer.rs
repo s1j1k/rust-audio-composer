@@ -5,13 +5,22 @@ use egui::{Color32, Ui, Vec2};
 
 const CELL: f32 = 28.0;
 
+/// Pop-out window version (with its own heading).
 pub fn show_drum_sequencer(app: &mut DAWApp, ui: &mut Ui) {
-    ui.heading("🥁 Beat Sequencer");
+    ui.heading("Beat Sequencer");
+    show_drum_sequencer_body(app, ui);
+}
+
+/// The sequencer itself; docked into the bottom panel on drum tracks.
+pub fn show_drum_sequencer_body(app: &mut DAWApp, ui: &mut Ui) {
     ui.label(
-        "Pattern loops while you edit · steps update the preview immediately · \
-         press Record to write changes into a clip on the timeline.",
+        egui::RichText::new(
+            "Click steps to toggle (Shift = accent, right-click = clear) · ▶ Run loop to audition \
+             · press Record to write the pattern into a clip on the timeline.",
+        )
+        .small()
+        .color(Color32::GRAY),
     );
-    ui.separator();
 
     let track_idx = app.current_track;
     if track_idx >= app.project.tracks.len() {
@@ -73,11 +82,14 @@ pub fn show_drum_sequencer(app: &mut DAWApp, ui: &mut Ui) {
 
     ui.add_space(4.0);
 
-    let grid_width = CELL * steps as f32 + 100.0;
+    const LABEL_W: f32 = 132.0;
+    let grid_width = CELL * steps as f32 + LABEL_W + 10.0;
     let grid_height = CELL * DrumKind::all().len() as f32 + 24.0;
     let (rect, _) = ui.allocate_exact_size(Vec2::new(grid_width, grid_height), egui::Sense::hover());
     let painter = ui.painter_at(rect);
-    let origin = rect.min + Vec2::new(90.0, 20.0);
+    // Opaque backdrop so step numbers and cells read the same on light and dark themes.
+    painter.rect_filled(rect, 6.0, Color32::from_rgb(28, 27, 34));
+    let origin = rect.min + Vec2::new(LABEL_W, 20.0);
 
     for s in 0..steps {
         let x = origin.x + s as f32 * CELL;
@@ -100,12 +112,20 @@ pub fn show_drum_sequencer(app: &mut DAWApp, ui: &mut Ui) {
 
     for (row, &drum) in DrumKind::all().iter().enumerate() {
         let y = origin.y + row as f32 * CELL;
+        // Opaque label chip (readable on light and dark themes) with a drawn icon.
+        let chip = egui::Rect::from_min_size(
+            egui::pos2(rect.min.x, y),
+            Vec2::new(LABEL_W - 6.0, CELL - 2.0),
+        );
+        painter.rect_filled(chip, 4.0, Color32::from_rgb(44, 42, 52));
+        let icon = egui::Rect::from_min_size(chip.min + Vec2::new(3.0, 1.0), Vec2::splat(CELL - 4.0));
+        crate::ui::drum_icons::paint_drum_icon(&painter, icon, drum, Color32::from_rgb(255, 190, 120));
         painter.text(
-            egui::pos2(rect.min.x + 4.0, y + CELL * 0.5),
+            egui::pos2(icon.max.x + 5.0, y + CELL * 0.5 - 1.0),
             egui::Align2::LEFT_CENTER,
-            format!("{} {}", drum.icon(), drum.label()),
+            drum.label(),
             theme::font(theme::FONT_LG),
-            Color32::WHITE,
+            Color32::from_rgb(235, 235, 240),
         );
 
         for step in 0..steps {
@@ -222,7 +242,7 @@ pub fn show_drum_sequencer(app: &mut DAWApp, ui: &mut Ui) {
     ui.collapsing("Drum sample credits (CC0)", |ui| {
         for src in crate::audio::all_drum_sources() {
             ui.horizontal(|ui| {
-                ui.label(format!("{} {}", src.kind.icon(), src.kind.label()));
+                ui.label(src.kind.label().to_string());
                 ui.label(format!("({})", src.license));
             });
         }

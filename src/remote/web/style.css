@@ -52,6 +52,13 @@ button, select, input[type=text] {
 }
 button:active { background: #343a45; }
 .btn { min-width: 38px; }
+.rec { display: flex; align-items: center; gap: 6px; font-weight: 700; letter-spacing: 1px; font-variant-numeric: tabular-nums; }
+.rec-dot { width: 10px; height: 10px; border-radius: 50%; background: #e5484d; flex: none; }
+.rec.count { background: #6b4a12; border-color: #f0a830; color: #fff; }
+.rec.count .rec-dot { background: #f0a830; }
+.rec.on { background: #c62828; border-color: #ff6b6b; color: #fff; animation: recpulse 1s ease-in-out infinite; }
+.rec.on .rec-dot { background: #fff; border-radius: 2px; }
+@keyframes recpulse { 50% { background: #8e1d1d; } }
 .chip { display: flex; align-items: center; gap: 6px; background: transparent; border-color: transparent; padding: 0 4px; }
 .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--bad); flex: none; }
 .dot.ok { background: var(--ok); }
