@@ -62,14 +62,20 @@ fn render_track_buffer(
     let mut synth = SynthEngine::new(sample_rate);
     let mut fx = EffectProcessor::new(sample_rate);
     let profile_name = track.instrument.label();
-    let params = profiles
-        .get(&profile_name)
-        .map(|p| p.params.clone())
-        .unwrap_or_else(|| {
-            crate::model::instrument::default_params_for_kind(
-                crate::model::instrument::SampleKind::Piano,
-            )
-        });
+    let params = if let InstrumentId::Sampled(name) = &track.instrument {
+        // Offline render can't wait for the background loader.
+        crate::library::load_blocking(name, sample_rate);
+        crate::library::synth_params(name)
+    } else {
+        profiles
+            .get(&profile_name)
+            .map(|p| p.params.clone())
+            .unwrap_or_else(|| {
+                crate::model::instrument::default_params_for_kind(
+                    crate::model::instrument::SampleKind::Piano,
+                )
+            })
+    };
     let track_filter = track.effects.effective_lowpass();
 
     let mut scheduled: Vec<(u64, u8, f32, bool)> = Vec::new();

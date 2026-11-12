@@ -13,6 +13,8 @@ serde_json = "1.0"
 rfd = "0.15"
 hound = "3.5"
 claxon = "0.4.3"
+# Decoding imported note samples (Freesound previews are OGG/MP3; local packs can be anything).
+symphonia = { version = "0.5.4", default-features = false, features = ["wav", "pcm", "flac", "ogg", "vorbis", "mp3", "aiff"] }
 ureq = { version = "=2.9.7", default-features = false, features = ["tls", "native-tls"] }
 
 # --- Remote keyboard (iPhone/iPad over local Wi-Fi) ---

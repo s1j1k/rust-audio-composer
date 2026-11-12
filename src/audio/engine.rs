@@ -160,6 +160,11 @@ impl AudioEngine {
                 let macros = Macros::for_preset(*preset, None, track_filter);
                 self.synth.preset_note_on(*preset, pitch, velocity, macros);
             }
+            InstrumentId::Sampled(name) => {
+                let mut params = crate::library::synth_params(name);
+                params.filter_cutoff = (params.filter_cutoff * track_filter).clamp(0.05, 1.0);
+                self.synth.note_on(pitch, velocity, params);
+            }
             other => {
                 let profile_name = other.label();
                 let mut params = self
@@ -192,6 +197,11 @@ impl AudioEngine {
         let filter = self.live_filter;
         self.play_note_for_instrument(pitch, vel, &inst, filter);
         vel
+    }
+
+    /// Preview a sample in the instrument library.
+    pub fn audition(&mut self, sample: std::sync::Arc<Vec<f32>>) {
+        self.synth.audition(sample);
     }
 
     pub fn stop_note(&mut self, pitch: u8) {

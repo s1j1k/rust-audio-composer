@@ -226,6 +226,14 @@ pub fn show_track_panel(app: &mut DAWApp, ui: &mut Ui) {
         if let Some(id) = picked {
             app.set_track_instrument(id);
         }
+        if !drum_track
+            && ui
+                .small_button("Browse more instruments…")
+                .on_hover_text("Build instruments from single-note samples on Freesound or in a folder")
+                .clicked()
+        {
+            app.show_library = true;
+        }
     }
 
     ui.add_space(12.0);

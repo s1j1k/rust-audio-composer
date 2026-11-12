@@ -102,6 +102,17 @@ Multi-velocity instruments crossfade between real soft and hard recordings, so s
 
 Drum kits play from the General MIDI drum map *and* from any octave (C = kick, D = snare, F♯ = closed hat, A♯ = open hat…), so they work from a phone. Closed hats choke open hats.
 
+### Instrument Library (more instruments from single-note samples)
+
+Open **View → Instrument library**, or **Browse more instruments…** under the instrument picker. Instruments are built from **individual recorded notes only**: no loops or beat samples, so everything you make is played from scratch. Each note you add becomes a key, and the keys in between repitch the nearest note.
+
+- **Freesound:** search the "Instrument samples" category for single notes (loops are filtered out). Preview with ▶, tick the notes you want, and **Add selected** to a new or existing instrument. **Pack** shows every sound in a Freesound pack, which is often all the notes of one recorded instrument. Each sample's note comes from Freesound's pitch analysis, the file name, or ChorDAW's own pitch detection.
+  - Needs **your own free API key** from [freesound.org/apiv2/apply](https://freesound.org/apiv2/apply). Freesound doesn't allow apps to share one key, so it's not built in. Paste it into the Freesound tab; it's stored only on your computer (`~/rust-audio-composer/settings.json`).
+  - Samples come from Freesound's high-quality previews (OGG ~192 kbps), which need only the key.
+- **Import folder:** for packs you download yourself (soundpacks.com, VCSL, Philharmonia…). Choose the folder; notes are read from names like `Cello_A3.wav` or measured from the audio, and you can correct them (with an octave fix for packs that call middle C "C3").
+- **Only sounds you may use in songs you release or sell can be added:** Creative Commons 0, Attribution (CC BY), or packs whose licence says they're royalty-free for music. NonCommercial and unknown licences are refused. Every sample keeps its title, author, licence and link, listed under **Credits** for each instrument; credit Attribution authors when you publish.
+- Instruments are stored in `~/rust-audio-composer/instruments/` and appear in every instrument picker (including the phone's) under **Sample library**.
+
 ### ✨ Sound Designer (describe a timbre)
 1. Describe the sound the way you'd tell a producer friend: *"dark gritty 808 with a long tail"*, *"dusty lofi rhodes, warm and a bit wobbly"*, *"lush cinematic strings that swell slowly"*.
 2. As you type, **"I'm hearing:"** shows what it understood: the base instrument (genre-aware, so "trap bass" → 808 and "dnb bass" → Reese) and each trait.

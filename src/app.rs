@@ -131,6 +131,9 @@ pub struct DAWApp {
     pub write_note_length: f64,
     /// Dragged clip edges stick to the playhead when close (hold Alt to drag freely).
     pub snap_clips_to_playhead: bool,
+    /// Instrument Library window (sample instruments from Freesound / folders).
+    pub show_library: bool,
+    pub library_ui: crate::ui::library_panel::LibraryUi,
     /// A clip edge is currently stuck to the playhead (drawn as a highlight).
     pub clip_snapped: bool,
     pub last_frame: Instant,
@@ -274,6 +277,8 @@ impl Default for DAWApp {
             preview_releases: Vec::new(),
             write_note_length: 1.0,
             snap_clips_to_playhead: true,
+            show_library: false,
+            library_ui: Default::default(),
             clip_snapped: false,
             last_frame: Instant::now(),
             playback_start: Instant::now(),
@@ -2616,6 +2621,7 @@ impl eframe::App for DAWApp {
         self.show_piano_window(ctx);
         crate::ui::show_delete_track_confirm(self, ctx);
         crate::ui::menu_bar::show_unsaved_prompt(self, ctx);
+        crate::ui::library_panel::show_library_window(self, ctx);
 
         if self.show_remote {
             let mut show = self.show_remote;
@@ -2748,6 +2754,9 @@ impl DAWApp {
         out.push(("Sampled".to_string(), InstrumentId::Drums));
         for c in &self.custom_instruments {
             out.push(("My Instruments".to_string(), InstrumentId::Custom(c.name.clone())));
+        }
+        for name in crate::library::names() {
+            out.push(("Sample library".to_string(), InstrumentId::Sampled(name)));
         }
         out
     }
