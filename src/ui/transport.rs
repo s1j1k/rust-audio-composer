@@ -2,7 +2,8 @@ use crate::app::DAWApp;
 use egui::Ui;
 
 pub fn show_transport(app: &mut DAWApp, ui: &mut Ui) {
-    ui.horizontal(|ui| {
+    // Wraps onto a second line on narrow windows instead of cutting buttons off.
+    ui.horizontal_wrapped(|ui| {
         if ui
             .button(if app.playing { "⏸ Pause" } else { "▶ Play" })
             .clicked()
@@ -86,12 +87,7 @@ pub fn show_transport(app: &mut DAWApp, ui: &mut Ui) {
             .on_hover_text("Virtual piano in the bottom panel (Pop out there for a separate window)")
             .clicked()
         {
-            if app.show_piano {
-                app.show_piano = false; // close the pop-out
-            } else {
-                app.bottom_keyboard = !app.bottom_keyboard;
-            }
-            app.sync_sequencer_visibility();
+            app.toggle_piano();
         }
 
         if ui
@@ -99,10 +95,7 @@ pub fn show_transport(app: &mut DAWApp, ui: &mut Ui) {
             .on_hover_text("Play from your iPhone / iPad over Wi-Fi")
             .clicked()
         {
-            app.show_remote = !app.show_remote;
-            if app.show_remote {
-                app.start_remote();
-            }
+            app.toggle_remote();
         }
 
         if ui
@@ -138,20 +131,6 @@ pub fn show_transport(app: &mut DAWApp, ui: &mut Ui) {
             app.show_dj_panel = !app.show_dj_panel;
         }
 
-        if ui
-            .selectable_label(app.show_options, "⚙ Options")
-            .clicked()
-        {
-            app.show_options = !app.show_options;
-        }
-
-        if ui
-            .selectable_label(app.show_user_guide, "📖 Guide")
-            .clicked()
-        {
-            app.show_user_guide = !app.show_user_guide;
-        }
-
         ui.separator();
 
         ui.label("BPM:");
@@ -184,23 +163,5 @@ pub fn show_transport(app: &mut DAWApp, ui: &mut Ui) {
             app.project.playhead_beat, app.project.total_beats
         ));
 
-        ui.separator();
-
-        if ui.button("💾 Save Project").clicked() {
-            app.save_project_dialog();
-        }
-        if ui.button("📂 Load Project").clicked() {
-            app.load_project_dialog();
-        }
-        if ui.button("🎵 Export WAV").clicked() {
-            app.export_wav_dialog();
-        }
-
-        if let Some(ref msg) = app.status_message {
-            ui.label(egui::RichText::new(msg).color(egui::Color32::LIGHT_GREEN));
-        }
-        if let Some(ref err) = app.status_error {
-            ui.label(egui::RichText::new(err).color(egui::Color32::LIGHT_RED));
-        }
     });
 }

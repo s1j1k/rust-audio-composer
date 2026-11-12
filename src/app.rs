@@ -17,6 +17,13 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+/// File actions that may need a "save changes?" prompt first.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FileAction {
+    New,
+    Open,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NoteDragMode {
     Move,
@@ -122,6 +129,10 @@ pub struct DAWApp {
     pub preview_releases: Vec<(u8, Instant)>,
     /// Length of notes written with a click in the piano roll; follows the last resize.
     pub write_note_length: f64,
+    /// Dragged clip edges stick to the playhead when close (hold Alt to drag freely).
+    pub snap_clips_to_playhead: bool,
+    /// A clip edge is currently stuck to the playhead (drawn as a highlight).
+    pub clip_snapped: bool,
     pub last_frame: Instant,
     pub playback_start: Instant,
 
@@ -143,6 +154,10 @@ pub struct DAWApp {
     pub status_message: Option<String>,
     pub status_error: Option<String>,
     pub project_file_path: Option<String>,
+    /// The project as last saved / opened, to tell whether there are unsaved changes.
+    pub saved_snapshot: Project,
+    pub pending_file_action: Option<FileAction>,
+    window_title: String,
 
     pub selected_note: Option<(usize, usize)>,
     pub selected_clip: Option<usize>,
@@ -258,6 +273,8 @@ impl Default for DAWApp {
             history: None,
             preview_releases: Vec::new(),
             write_note_length: 1.0,
+            snap_clips_to_playhead: true,
+            clip_snapped: false,
             last_frame: Instant::now(),
             playback_start: Instant::now(),
 
@@ -279,6 +296,9 @@ impl Default for DAWApp {
             status_message: None,
             status_error: None,
             project_file_path: None,
+            saved_snapshot: Project::default(),
+            pending_file_action: None,
+            window_title: String::new(),
 
             selected_note: None,
             selected_clip: None,
@@ -816,6 +836,33 @@ impl DAWApp {
             }
         }
         out
+    }
+
+    /// Move the selected clips so the first one starts at the playhead (spacing kept).
+    pub fn move_selected_clips_to_playhead(&mut self) {
+        if self.clip_ops_blocked() {
+            return;
+        }
+        let idxs = self.selected_clip_indices();
+        let Some(track) = self.project.tracks.get_mut(self.current_track) else { return };
+        let Some(first) = idxs.iter().map(|&i| track.clips[i].start_beat).reduce(f64::min) else {
+            return;
+        };
+        let delta = self.project.playhead_beat - first;
+        let ids: Vec<u64> = idxs.iter().map(|&i| track.clips[i].id).collect();
+        let mut end = 0.0_f64;
+        for &i in &idxs {
+            track.clips[i].offset_on_timeline(delta);
+            end = end.max(track.clips[i].timeline_end());
+        }
+        // Keep the clip list in timeline order, and the selection on the same clips.
+        track.clips.sort_by(|a, b| a.start_beat.total_cmp(&b.start_beat));
+        self.selected_clip = track.clips.iter().position(|c| ids.contains(&c.id));
+        self.selected_clip_ids = ids.into_iter().collect();
+        self.extend_project_to(end);
+        self.stop_playback_notes();
+        self.status_error = None;
+        self.status_message = Some("Moved to the playhead".to_string());
     }
 
     /// Make sure the song is at least `end_beat` long (rounded up to a whole bar).
@@ -1689,44 +1736,156 @@ impl DAWApp {
         self.audio.set_profile(name);
     }
 
-    pub fn save_project_dialog(&mut self) {
+    // ---- Files --------------------------------------------------------------------
+
+    /// Save to the current file (Ctrl+S); asks for a file name the first time.
+    pub fn save_project(&mut self) {
+        match self.project_file_path.clone() {
+            Some(path) => self.write_project(std::path::PathBuf::from(path)),
+            None => self.save_project_as(),
+        }
+    }
+
+    /// Save under a new name (Ctrl+Shift+S).
+    pub fn save_project_as(&mut self) {
         self.status_error = None;
+        let file_name = format!("{}.rac.json", self.project_display_name());
         let path = rfd::FileDialog::new()
-            .add_filter("Rust Audio Composer", &["rac.json", "json"])
-            .set_file_name("my-song.rac.json")
+            .add_filter("ChorDAW project", &["rac.json", "json"])
+            .set_file_name(file_name)
             .save_file();
         if let Some(path) = path {
-            let saved = SavedProject::from_app(
-                self.project.clone(),
-                self.custom_instruments.clone(),
-                self.saved_drum_patterns.clone(),
-                self.audio.master_volume,
-                self.audio.master_effects,
-            );
-            match saved.save_to_path(&path) {
-                Ok(()) => {
-                    self.project_file_path = Some(path.display().to_string());
-                    self.status_message = Some(format!("Saved project to {}", path.display()));
-                }
-                Err(e) => self.status_error = Some(e),
+            self.write_project(path);
+        }
+    }
+
+    fn write_project(&mut self, path: std::path::PathBuf) {
+        let saved = SavedProject::from_app(
+            self.project.clone(),
+            self.custom_instruments.clone(),
+            self.saved_drum_patterns.clone(),
+            self.audio.master_volume,
+            self.audio.master_effects,
+        );
+        match saved.save_to_path(&path) {
+            Ok(()) => {
+                self.project_file_path = Some(path.display().to_string());
+                self.saved_snapshot = self.project.clone();
+                self.status_error = None;
+                self.status_message = Some(format!("Saved {}", path.display()));
             }
+            Err(e) => self.status_error = Some(e),
         }
     }
 
     pub fn load_project_dialog(&mut self) {
         self.status_error = None;
         if let Some(path) = rfd::FileDialog::new()
-            .add_filter("Rust Audio Composer", &["rac.json", "json"])
+            .add_filter("ChorDAW project", &["rac.json", "json"])
             .pick_file()
         {
             match SavedProject::load_from_path(&path) {
                 Ok(saved) => {
+                    self.finish_recording();
+                    self.stop_playback();
                     self.apply_saved_project(saved);
                     self.project_file_path = Some(path.display().to_string());
-                    self.status_message = Some(format!("Loaded project from {}", path.display()));
+                    self.saved_snapshot = self.project.clone();
+                    self.status_message = Some(format!("Opened {}", path.display()));
                 }
                 Err(e) => self.status_error = Some(e),
             }
+        }
+    }
+
+    /// Start an empty project (two tracks, like at start-up).
+    pub fn new_project(&mut self) {
+        self.finish_recording();
+        self.stop_playback();
+        self.project = Project::default();
+        self.migrate_tracks();
+        self.project_file_path = None;
+        self.saved_snapshot = self.project.clone();
+        self.history = None;
+        self.current_track = 0;
+        self.selected_clip = None;
+        self.selected_clip_ids.clear();
+        self.selected_note = None;
+        self.note_drag = None;
+        self.clip_drag = None;
+        self.pending_track_delete = None;
+        self.section_range = None;
+        self.section_note_indices = None;
+        self.section_drag_origins.clear();
+        self.section_clip_index = None;
+        self.sequencer_draft_track = None;
+        self.sequencer_draft.clear();
+        self.sync_instrument_to_track();
+        self.sync_sequencer_visibility();
+        self.status_error = None;
+        self.status_message = Some("New project".to_string());
+    }
+
+    /// New / Open, asking first if there are unsaved changes.
+    pub fn request_file_action(&mut self, action: FileAction) {
+        if self.is_dirty() {
+            self.pending_file_action = Some(action);
+        } else {
+            self.perform_file_action(action);
+        }
+    }
+
+    pub fn perform_file_action(&mut self, action: FileAction) {
+        match action {
+            FileAction::New => self.new_project(),
+            FileAction::Open => self.load_project_dialog(),
+        }
+    }
+
+    /// Changed since the last save / open / new (the playhead doesn't count).
+    pub fn is_dirty(&self) -> bool {
+        !crate::history::same_content(&self.project, &self.saved_snapshot)
+    }
+
+    /// File name without folders or the `.rac.json` extension, or "Untitled".
+    pub fn project_display_name(&self) -> String {
+        self.project_file_path
+            .as_deref()
+            .and_then(|p| std::path::Path::new(p).file_name())
+            .map(|n| {
+                let n = n.to_string_lossy();
+                n.trim_end_matches(".json").trim_end_matches(".rac").to_string()
+            })
+            .unwrap_or_else(|| "Untitled".to_string())
+    }
+
+    /// Keep the window title as "name* - ChorDAW".
+    fn update_window_title(&mut self, ctx: &egui::Context) {
+        let title = format!(
+            "{}{} - ChorDAW",
+            self.project_display_name(),
+            if self.is_dirty() { "*" } else { "" }
+        );
+        if title != self.window_title {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
+            self.window_title = title;
+        }
+    }
+
+    /// The 🎹 Piano toggle: docked in the bottom panel, or close the pop-out.
+    pub fn toggle_piano(&mut self) {
+        if self.show_piano {
+            self.show_piano = false; // close the pop-out
+        } else {
+            self.bottom_keyboard = !self.bottom_keyboard;
+        }
+        self.sync_sequencer_visibility();
+    }
+
+    pub fn toggle_remote(&mut self) {
+        self.show_remote = !self.show_remote;
+        if self.show_remote {
+            self.start_remote();
         }
     }
 
@@ -2382,8 +2541,14 @@ impl DAWApp {
 
 impl eframe::App for DAWApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if self.window_title.is_empty() {
+            // First frame: whatever start-up migration did isn't an unsaved change.
+            self.saved_snapshot = self.project.clone();
+        }
         self.history_tick(ctx);
         self.release_due_previews();
+        crate::ui::menu_bar::handle_file_shortcuts(self, ctx);
+        self.update_window_title(ctx);
         self.sync_sequencer_visibility();
         self.update_playback();
         self.update_count_in();
@@ -2410,8 +2575,14 @@ impl eframe::App for DAWApp {
         }
         ctx.request_repaint();
 
+        egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
+            crate::ui::menu_bar::show_menu_bar(self, ui);
+        });
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
             crate::ui::show_transport(self, ui);
+        });
+        egui::TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
+            crate::ui::menu_bar::show_status_bar(self, ui);
         });
 
         egui::SidePanel::left("track_panel")
@@ -2444,6 +2615,7 @@ impl eframe::App for DAWApp {
 
         self.show_piano_window(ctx);
         crate::ui::show_delete_track_confirm(self, ctx);
+        crate::ui::menu_bar::show_unsaved_prompt(self, ctx);
 
         if self.show_remote {
             let mut show = self.show_remote;
@@ -2533,7 +2705,6 @@ impl DAWApp {
 }
 
 
-/// Identifies one scheduled note-on during playback, so each fires once per pass.
 /// Identifies one scheduled note-on during playback: (track, clip, trigger time in
 /// thousandths of a beat, pitch).
 pub type PlaybackEventKey = (usize, usize, i64, u8);

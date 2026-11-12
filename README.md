@@ -144,6 +144,7 @@ Effects apply live on the master output; per-track effects apply fully on **WAV 
 
 **Timeline (top)**, one row per track:
 - Click a row to select that track
+- **Snap to playhead:** dragged clips (and their trim and loop handles) stick to the playhead when they get close; hold Alt to drag freely, or untick "Snap to playhead". Right-click a clip → **Move to playhead** jumps the selection there
 - **Move the playhead** by dragging the red ▼ handle in the ruler, the ▲ handle at the bottom, or the line itself (or click the ruler)
 - Each clip ("bubble") shows a **mini piano roll** of its notes; looped repeats are drawn as dimmer copies
 
@@ -174,13 +175,15 @@ Effects apply live on the master output; per-track effects apply fully on **WAV 
   - **Genre tips** for trap, hip hop, drum & bass, UK garage and classical: tempo range with a one-click **Set BPM**, arrangement, drum and harmony tips, and genre-flavoured progressions. Drum & bass figures follow [DnB Academy's BPM and structure guide](https://app.dnbacademy.net/learn/drum-and-bass-bpm-and-structure)
   - Interactive circle of fifths
 
-### Save, Load & Export
-- **💾 Save Project** / **📂 Load Project** (`.rac.json`, includes custom instruments)
-- **🎵 Export WAV** renders the full composition
+### Save, Open & Export (File menu)
+- **New project** (Ctrl+N), **Open project…** (Ctrl+O), **Save** (Ctrl+S, saves back to the same file), **Save as…** (Ctrl+Shift+S). Projects are `.rac.json` files and include your custom instruments
+- **Export WAV…** (Ctrl+E) renders the full composition
+- The window title shows the song name with `*` when there are unsaved changes; New and Open ask before discarding them
+- **Edit** has undo/redo and the clip actions, **View** shows or hides each panel, **Help** opens the guide. Messages appear in the status bar at the bottom
 
 ### Quick tour
 
-Open **📖 Guide** in the transport bar for the in-app guide.
+Open **Help → User guide** for the in-app guide.
 
 | Button | What it does |
 |--------|--------------|
@@ -192,7 +195,7 @@ Open **📖 Guide** in the transport bar for the in-app guide.
 | **✨ Sound Designer** | Describe and shape your own instruments |
 | **Drums** | Beat sequencer (bottom panel on drum tracks) |
 | **DJ** | Mix effects |
-| **⚙ Options** | Interface font, interface size and help display |
+| **View → Options…** | Interface font, interface size and help display |
 | **Space** | Play / pause, or stop recording |
 
 ## Keyboard Shortcuts (Piano Window)

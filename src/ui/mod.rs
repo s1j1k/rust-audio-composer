@@ -8,6 +8,7 @@ mod dj_panel;
 mod drum_sequencer;
 pub mod drum_icons;
 pub mod grid;
+pub mod menu_bar;
 pub mod instrument_designer;
 mod remote_panel;
 mod piano;

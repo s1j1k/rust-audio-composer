@@ -16,7 +16,11 @@ pub fn show_multi_track_timeline(app: &mut DAWApp, ui: &mut Ui) {
         "Clips group notes from each recording or edit — drag to move, trim edges to crop (recoverable), \
          drag the loop handle to repeat.",
     );
-    show_zoom_controls(app, ui, "timeline_zoom");
+    ui.horizontal(|ui| {
+        show_zoom_controls(app, ui, "timeline_zoom");
+        ui.checkbox(&mut app.snap_clips_to_playhead, "Snap to playhead")
+            .on_hover_text("Dragged clip edges stick to the playhead when close. Hold Alt to drag freely.");
+    });
     show_song_sections_panel(app, ui);
     ui.add_space(4.0);
 
@@ -139,6 +143,13 @@ pub fn show_multi_track_timeline(app: &mut DAWApp, ui: &mut Ui) {
                 }
 
                 playhead_scrubber(app, ui, ruler_rect, grid_rect, "timeline_playhead");
+                if app.clip_snapped && app.clip_drag.is_some() {
+                    let x = x_from_beat(app, app.project.playhead_beat, grid_rect.min.x);
+                    ui.painter_at(grid_rect).line_segment(
+                        [egui::pos2(x, grid_rect.min.y), egui::pos2(x, grid_rect.max.y)],
+                        egui::Stroke::new(3.0_f32, Color32::from_rgb(255, 210, 90)),
+                    );
+                }
 
                 // Row dividers on the header column (same Y as grid rows).
                 let header_painter = ui.painter_at(left_rect);
@@ -682,6 +693,13 @@ pub fn handle_clip_drag(app: &mut DAWApp, ui: &mut Ui, grid_origin_x: f32) {
     let track_idx = drag.track_index;
     let clip_idx = drag.clip_index;
 
+    // Magnet: an edge within ~10 px of the playhead lands exactly on it.
+    let playhead = app.project.playhead_beat;
+    let snap_on = app.snap_clips_to_playhead && !ui.input(|i| i.modifiers.alt);
+    let reach = 10.0 / beat_width(app).max(1.0) as f64;
+    let near = |b: f64| snap_on && (b - playhead).abs() <= reach;
+    let mut snapped = false;
+
     if let Some(clip) = app
         .project
         .tracks
@@ -690,8 +708,16 @@ pub fn handle_clip_drag(app: &mut DAWApp, ui: &mut Ui, grid_origin_x: f32) {
     {
         match drag.mode {
             ClipDragMode::Move => {
-                let new_start = (beat - drag.grab_beat).max(0.0);
-                let delta = new_start - drag.orig_start;
+                let mut new_start = (beat - drag.grab_beat).max(0.0);
+                let len = clip.visible_length();
+                if near(new_start) {
+                    new_start = playhead;
+                    snapped = true;
+                } else if near(new_start + len) && playhead - len >= 0.0 {
+                    new_start = playhead - len;
+                    snapped = true;
+                }
+                let delta = new_start - clip.start_beat;
                 clip.offset_on_timeline(delta);
             }
             ClipDragMode::TrimStart => {
@@ -699,15 +725,28 @@ pub fn handle_clip_drag(app: &mut DAWApp, ui: &mut Ui, grid_origin_x: f32) {
                 clip.set_trim_start(rel.min(clip.source_length - clip.trim_end - 0.25));
             }
             ClipDragMode::TrimEnd => {
+                let beat = if near(beat) {
+                    snapped = true;
+                    playhead
+                } else {
+                    beat
+                };
                 let rel_end = (beat - clip.start_beat).max(clip.trim_start + 0.25);
                 clip.set_trim_end((clip.source_length - rel_end).max(0.0));
             }
             ClipDragMode::ExtendLoop => {
+                let beat = if near(beat) {
+                    snapped = true;
+                    playhead
+                } else {
+                    beat
+                };
                 clip.loop_enabled = true;
                 clip.set_loop_end(beat.max(clip.start_beat + clip.visible_length()));
             }
         }
     }
+    app.clip_snapped = snapped;
 }
 
 /// Right-click menu on a clip bubble. Right-clicking a clip outside the selection
@@ -735,6 +774,10 @@ fn clip_context_menu(app: &mut DAWApp, ui: &mut Ui, track_index: usize, clip_idx
     }
     if ui.button(format!("Duplicate {what}  (Ctrl+D)")).clicked() {
         app.duplicate_selected_clips();
+        ui.close_menu();
+    }
+    if ui.button(format!("Move {what} to playhead")).clicked() {
+        app.move_selected_clips_to_playhead();
         ui.close_menu();
     }
     if ui
