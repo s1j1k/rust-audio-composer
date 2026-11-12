@@ -155,6 +155,25 @@ pub fn show_multi_track_timeline(app: &mut DAWApp, ui: &mut Ui) {
             });
     });
 
+    // Add tracks right under the last one, where a new row will appear.
+    ui.add_space(4.0);
+    ui.horizontal(|ui| {
+        if ui
+            .button("+ Melodic track")
+            .on_hover_text("Add a track for piano, bass, synths… below the others")
+            .clicked()
+        {
+            app.add_new_track(false);
+        }
+        if ui
+            .button("+ Drum track")
+            .on_hover_text("Add a drum track below the others (opens the step sequencer)")
+            .clicked()
+        {
+            app.add_new_track(true);
+        }
+    });
+
     if let Some(origin) = app.timeline_grid_origin_x {
         handle_clip_drag(app, ui, origin);
     }
@@ -548,6 +567,28 @@ fn interact_clip(
 
     if body_resp.hovered() || body_resp.dragged() {
         ui.ctx().set_cursor_icon(CursorIcon::Grab);
+    }
+    if body_resp.hovered() && app.clip_drag.is_none() {
+        let melodic = app.project.tracks.get(track_index).map(|t| !t.is_drum()).unwrap_or(false);
+        if let (true, Some(pos)) = (melodic, body_resp.hover_pos()) {
+            let beat = beat_from_x(app, pos.x, grid_origin_x);
+            let mut spans = Vec::new();
+            crate::app::clip_spans(clip, app.project.total_beats, &mut spans);
+            let chord = crate::music::chord_segments(&spans)
+                .into_iter()
+                .find(|(a, b, _)| beat >= *a && beat < *b);
+            let text = match chord {
+                Some((_, _, c)) => format!(
+                    "{}: {}  ({})\nBass note: {}",
+                    clip.name,
+                    c.name,
+                    c.tone_names(),
+                    crate::music::NOTE_NAMES[c.root as usize]
+                ),
+                None => clip.name.clone(),
+            };
+            body_resp.clone().on_hover_text_at_pointer(text);
+        }
     }
     if trim_start_resp.hovered() || trim_end_resp.hovered() || loop_resp.hovered() {
         ui.ctx().set_cursor_icon(CursorIcon::ResizeHorizontal);

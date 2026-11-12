@@ -133,7 +133,7 @@ pub fn show_piano_roll_detail(app: &mut DAWApp, ui: &mut Ui) {
     show_zoom_controls(app, ui, "piano_roll_zoom");
     ui.label(
         egui::RichText::new(
-            "Scroll on piano roll to shift pitch · Ctrl/⌘ + scroll to zoom · beats 1–4 in ruler",
+            "Click the grid to write a note (it takes the length of the last note you resized) · click the ruler to move the playhead · scroll to move up/down · Ctrl+scroll to zoom",
         )
         .small()
         .color(Color32::GRAY),
@@ -163,7 +163,6 @@ pub fn show_piano_roll_detail(app: &mut DAWApp, ui: &mut Ui) {
     handle_note_drag(app, ui, is_drum);
     if !is_drum {
         handle_section_drag(app, ui);
-        handle_delete_key(app, ui);
     }
 }
 
@@ -255,15 +254,19 @@ fn show_drum_roll(app: &mut DAWApp, ui: &mut Ui) {
     });
 }
 
-fn draw_grid_ruler(app: &DAWApp, ui: &mut Ui, grid_width: f32, total_beats: f32) {
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(grid_width, RULER_HEIGHT), Sense::hover());
+/// Bar ruler above the grid; click or drag it to move the playhead.
+fn draw_grid_ruler(app: &mut DAWApp, ui: &mut Ui, grid_width: f32, total_beats: f32) {
+    let (rect, resp) =
+        ui.allocate_exact_size(Vec2::new(grid_width, RULER_HEIGHT), Sense::click_and_drag());
     let painter = ui.painter_at(rect);
     draw_time_ruler(app, &painter, rect, total_beats);
-}
-
-fn handle_delete_key(app: &mut DAWApp, ui: &mut Ui) {
-    if ui.input(|i| i.key_pressed(egui::Key::Delete)) {
-        app.delete_selected_note();
+    if resp.hovered() {
+        ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
+    }
+    if resp.clicked() || resp.dragged() {
+        if let Some(pos) = resp.interact_pointer_pos() {
+            app.set_playhead(beat_from_x(app, pos.x, rect.min.x));
+        }
     }
 }
 
@@ -325,6 +328,8 @@ fn handle_note_drag(app: &mut DAWApp, ui: &mut Ui, is_drum: bool) {
                 NoteDragMode::Resize if !is_drum => {
                     note.duration_beats =
                         (beat - clip_start - note.start_beat).max(MIN_NOTE_BEATS);
+                    // The next note written with a click gets this length.
+                    app.write_note_length = note.duration_beats;
                 }
                 NoteDragMode::Resize => {}
             }
@@ -602,6 +607,7 @@ fn draw_melodic_grid(
                 roll_high,
                 visible_rows,
             );
+            draw_chord_names(app, ui, &painter, rect, &response);
             draw_playhead(app, ui, &painter, rect, &response, false);
         });
 }
@@ -1049,8 +1055,23 @@ fn draw_playhead(
                     let accent = ui.input(|i| i.modifiers.shift);
                     app.toggle_drum_hit_at_beat(app.current_track, drum, beat, accent);
                 }
-            } else {
-                app.set_playhead(beat.floor().max(0.0));
+            } else if !ui.input(|i| i.modifiers.alt) {
+                // Write a note, like on a score. (Move the playhead from the ruler.)
+                let row = ((pos.y - rect.min.y) / PIANO_ROW_HEIGHT).floor() as i32;
+                let pitch = app.piano_roll_high() as i32 - row;
+                if pitch >= app.piano_roll_low() as i32 && pitch <= app.piano_roll_high() as i32 {
+                    let start = (beat_from_x(app, pos.x, rect.min.x) / grid::grid_subdivision_beats(app.timeline_zoom))
+                        .floor()
+                        * grid::grid_subdivision_beats(app.timeline_zoom);
+                    let start = if ui.input(|i| i.modifiers.shift) {
+                        beat_from_x(app, pos.x, rect.min.x)
+                    } else {
+                        start
+                    };
+                    let len = app.write_note_length.max(MIN_NOTE_BEATS);
+                    app.add_note_at(pitch as u8, start.max(0.0), len);
+                    app.selected_note = None;
+                }
             }
         }
     }
@@ -1073,19 +1094,6 @@ fn draw_playhead(
             app.section_select_drag = None;
         }
 
-        if response.double_clicked() && !ph_response.clicked() {
-            if let Some(pos) = response.interact_pointer_pos() {
-                let beat = beat_from_x(app, pos.x, rect.min.x).floor().max(0.0);
-                let row = ((pos.y - rect.min.y) / PIANO_ROW_HEIGHT).floor() as i32;
-                let roll_high = app.piano_roll_high();
-                let roll_low = app.piano_roll_low();
-                let pitch = roll_high.saturating_sub(row as u8);
-                if pitch >= roll_low && pitch <= roll_high {
-                    app.set_playhead(beat);
-                    app.add_note_at(pitch, beat, 1.0);
-                }
-            }
-        }
     } else if response.double_clicked() && !ph_response.clicked() {
         if let Some(pos) = response.interact_pointer_pos() {
             let beat = snap_beat(
@@ -1098,6 +1106,58 @@ fn draw_playhead(
                 let accent = ui.input(|i| i.modifiers.shift);
                 app.toggle_drum_hit_at_beat(app.current_track, drum, beat, accent);
             }
+        }
+    }
+}
+
+/// Chord names along the top of the melodic grid, read from every melodic track (so on a
+/// bass track you see the chords you're writing the bass under), plus a tooltip naming
+/// the chord under the pointer and the notes that fit it.
+fn draw_chord_names(app: &DAWApp, ui: &Ui, painter: &egui::Painter, rect: Rect, response: &egui::Response) {
+    let segments = crate::music::chord_segments(&app.harmony_spans());
+    if segments.is_empty() {
+        return;
+    }
+    let view = ui.clip_rect().intersect(rect);
+    let font = theme::font(theme::FONT_SM);
+    let pill_bg = Color32::from_rgb(58, 52, 86);
+    let pill_fg = Color32::from_rgb(235, 225, 255);
+    let mut last_label_end = f32::MIN;
+    for (a, b, chord) in &segments {
+        let x0 = x_from_beat(app, *a, rect.min.x);
+        let x1 = x_from_beat(app, *b, rect.min.x);
+        if x1 < view.min.x || x0 > view.max.x {
+            continue;
+        }
+        // Bracket showing how long the chord lasts.
+        let y = rect.min.y + 1.0;
+        painter.line_segment(
+            [egui::pos2(x0 + 1.0, y), egui::pos2(x1 - 1.0, y)],
+            egui::Stroke::new(2.0_f32, pill_bg),
+        );
+        let galley = painter.layout_no_wrap(chord.name.clone(), font.clone(), pill_fg);
+        let x = x0.max(view.min.x) + 2.0;
+        if x < last_label_end + 4.0 {
+            continue; // too close to the previous label at this zoom
+        }
+        let pill = Rect::from_min_size(egui::pos2(x, y + 2.0), galley.size() + Vec2::new(8.0, 2.0));
+        painter.rect_filled(pill, 3.0, pill_bg);
+        painter.galley(pill.min + Vec2::new(4.0, 1.0), galley, pill_fg);
+        last_label_end = pill.max.x;
+    }
+
+    if let Some(pos) = response.hover_pos() {
+        let beat = beat_from_x(app, pos.x, rect.min.x);
+        if let Some((_, _, chord)) = segments.iter().find(|(a, b, _)| beat >= *a && beat < *b) {
+            let bass = crate::music::NOTE_NAMES[chord.root as usize];
+            let text = format!(
+                "{}  ({})\nBass: {} (the root), or another chord tone: {}",
+                chord.name,
+                chord.tone_names(),
+                bass,
+                chord.tone_names()
+            );
+            response.clone().on_hover_text_at_pointer(text);
         }
     }
 }

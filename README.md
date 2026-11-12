@@ -1,4 +1,8 @@
-# Rust Audio Composer
+<img src="assets/icon-512.png" alt="ChorDAW icon: a cursive Ch on staff lines" width="96" align="right">
+
+# ChorDAW
+
+*Chord + DAW. Working name; the repository is still called rust-audio-composer.*
 
 A native desktop Digital Audio Workstation (DAW) written in Rust. Make beats with expressive, velocity-sensitive instruments for trap, hip hop, drum & bass, UK garage and classical. Record multi-track compositions, design your own sounds by describing them, and **play it all wirelessly from your iPhone or iPad**.
 
@@ -150,6 +154,8 @@ Effects apply live on the master output; per-track effects apply fully on **WAV 
 
 **Piano Roll (bottom)**, the detailed editor for the selected track:
 - Vertical piano keys on the left; keys you're holding light up (blue = mouse/keyboard, green = phone), along with their row
+- **Click** the grid to write a note, like on a score: it goes into the clip at that spot (or extends the one just before it), or a new clip appears. New notes take the length of the last note you resized. Click the ruler to move the playhead
+- **Chord names** run along the top of the grid, read from all your melodic tracks, and hovering shows the chord under the pointer with its notes and bass note. Hovering a bubble in the timeline does the same, so on a bass track you can see what chord you're playing under
 - The keys look like a real keyboard on its side: low notes at the bottom, black keys shorter, octaves marked by a bold **C**
 - **Scroll** over the roll to move up and down by semitones, or use **▼ Octave / ▲ Octave** in Track Controls. The view reaches the whole MIDI range, down to the deepest bass notes
 - Notes being recorded grow in real time at the playhead, and the view scrolls to follow it
@@ -157,8 +163,10 @@ Effects apply live on the master output; per-track effects apply fully on **WAV 
 
 ### Multi-Track, Transport, Composition
 - Unlimited tracks; per-track volume, mute, instrument
-- **Delete a track** from Track Controls or by right-clicking its name in the timeline (a track with notes asks first; there's no undo yet)
-- **Clips:** Ctrl+click or Shift+click bubbles to select several. **Ctrl+C / Ctrl+V** copy and paste at the playhead, **Ctrl+D** duplicates right after, and **Merge** combines the selection into one clip (gaps and loop repeats included) that you can then loop as a whole. All of these are also in the bubble's right-click menu and in Track Controls
+- **Add tracks** with **+ Melodic track / + Drum track** just below the last track in the timeline
+- **Delete a track** from Track Controls or by right-clicking its name in the timeline (a track with notes asks first)
+- **Undo / Redo** with the transport buttons, **Ctrl+Z** and **Ctrl+Y** (or Ctrl+Shift+Z). Every edit is undoable: notes, clips, recordings (a whole take is one step), tracks, instruments, mixer settings and tempo. Moving the playhead isn't an edit
+- **Clips:** Ctrl+click or Shift+click bubbles to select several. **Ctrl+C / Ctrl+V** copy and paste at the playhead, **Ctrl+D** duplicates right after, **Delete** (or Backspace) removes the selected clips, and **Merge** combines the selection into one clip (gaps and loop repeats included) that you can then loop as a whole. All of these are also in the bubble's right-click menu and in Track Controls
 - Play / Pause / Stop / Record, BPM (40–240), time signature
 - **🎼 Compose:**
   - **Key:** use the key detected from your melodic notes, or choose any key yourself (also by clicking the circle of fifths)

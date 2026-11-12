@@ -77,6 +77,13 @@ Downloaded samples are stored at:
 
 Each instrument includes a `{name}.attribution.txt` with license and source URL.
 
+## App icon
+
+`assets/icon.png`, `assets/icon-512.png` and `assets/icon.ico` are a placeholder: the letters
+"Ch" set in French Script MT (a font bundled with Windows/Office) on staff lines. The font's
+licence should be checked before the icon is used to promote the app publicly, or the
+letters redrawn by hand (planned, along with custom hand-drawn track icons).
+
 ## Future libraries (not yet integrated)
 
 These are documented for planned expansion. Verify license before integration:

@@ -22,6 +22,23 @@ pub fn show_transport(app: &mut DAWApp, ui: &mut Ui) {
             app.go_to_end();
         }
 
+        ui.separator();
+        if ui
+            .add_enabled(app.can_undo(), egui::Button::new("Undo"))
+            .on_hover_text("Undo the last edit (Ctrl+Z)")
+            .clicked()
+        {
+            app.undo();
+        }
+        if ui
+            .add_enabled(app.can_redo(), egui::Button::new("Redo"))
+            .on_hover_text("Redo (Ctrl+Y or Ctrl+Shift+Z)")
+            .clicked()
+        {
+            app.redo();
+        }
+        ui.separator();
+
         if let Some(left) = app.count_in_beats_left() {
             let label = egui::RichText::new(format!("Count-in {left}…  (cancel)"))
                 .color(egui::Color32::WHITE)

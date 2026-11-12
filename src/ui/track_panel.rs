@@ -229,18 +229,6 @@ pub fn show_track_panel(app: &mut DAWApp, ui: &mut Ui) {
     }
 
     ui.add_space(12.0);
-    ui.horizontal(|ui| {
-        if ui.button("+ Melodic Track").clicked() {
-            app.project.add_track();
-        }
-        if ui.button("+ Drum Track").clicked() {
-            app.project.add_drum_track();
-            app.current_track = app.project.tracks.len() - 1;
-            app.sync_instrument_to_track();
-            app.open_drum_sequencer();
-        }
-    });
-
     ui.separator();
     ui.heading("Master");
     ui.add(egui::Slider::new(&mut app.audio.master_volume, 0.0..=1.0).text("Volume"));
@@ -268,7 +256,7 @@ pub fn show_delete_track_confirm(app: &mut DAWApp, ctx: &egui::Context) {
         .open(&mut keep_open)
         .show(ctx, |ui| {
             ui.label(format!(
-                "\"{name}\" has {clips} clip{} with {notes} note{}. This can't be undone.",
+                "\"{name}\" has {clips} clip{} with {notes} note{}. You can undo this with Ctrl+Z.",
                 if clips == 1 { "" } else { "s" },
                 if notes == 1 { "" } else { "s" },
             ));
