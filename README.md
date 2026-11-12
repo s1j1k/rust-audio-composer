@@ -107,7 +107,13 @@ Drum kits play from the General MIDI drum map *and* from any octave (C = kick, D
 2. As you type, **"I'm hearing:"** shows what it understood: the base instrument (genre-aware, so "trap bass" → 808 and "dnb bass" → Reese) and each trait.
 3. **✨ Create sound** plays a short soft-then-hard preview so you hear the velocity response.
 4. **Keep shaping it**, either with one-click chips (Warmer, Punchier, Longer tail, Wider, Grittier, Vintage…) or by typing follow-ups like *"a bit darker and less boomy"* or *"make it a harp instead"*. It understands intensity ("a bit", "very"), negation ("not too bright") and comparatives ("warmer"). There's undo, and sliders for fine-tuning.
-5. **💾 Save to library.** Custom instruments appear in every instrument picker, including on your phone. **Remix** reloads one into the designer.
+5. **🎵 See and edit the waveform.** Every sound you create is rendered as **one real note** (a single-note sample) that the instrument plays back, pitch-shifted, on every key, so what you see is what you hear. The waveform editor lets you:
+   - zoom (Ctrl + mouse wheel, or the zoom buttons) and scroll (Shift + wheel)
+   - **Select** a range, or **Draw** the waveform freehand with the pencil (zoom in to draw individual samples)
+   - fade in/out, normalize, change gain, reverse, silence, crop and delete, all undoable
+   - choose the pitch the note is rendered at (render basses low and bells high for the cleanest sound) and how long the key is held
+   - **import** your own one-note WAV/FLAC, or **export** the note as a WAV
+6. **💾 Save to library.** Custom instruments, with their audio, appear in every instrument picker, including on your phone. **Remix** reloads one into the designer.
 
 It runs entirely on your computer.
 
@@ -253,6 +259,15 @@ src/
   ai/                    # Natural-language timbre interpreter
   ui/                    # Transport, tracks, piano, piano roll, designer, remote panel…
 ```
+
+## Commercial use of your songs
+
+ChorDAW is an open-source project, and **the songs you make with it are yours to use commercially**: release them, sell them, sync them, use them in videos and games. No royalties, credits or permission needed.
+
+To keep that promise, every sound the app ships with, downloads or will be trained on must allow use in a commercial song:
+- The bundled and downloaded instrument samples are **CC0** (public domain). The genre presets and drum kits are synthesized by the app itself. See [CREDITS.md](CREDITS.md).
+- Sounds or datasets with **non-commercial** licenses (CC BY-NC, "personal use only", unknown license) are never imported, bundled, or used to train the sound-generation models. The same rule applies to pretrained model weights.
+- If you **import your own audio** (for example a one-note WAV in the Sound Designer), it's your responsibility to make sure you have the right to use it commercially.
 
 ## Roadmap / TODO
 

@@ -162,6 +162,15 @@ impl AudioEngine {
             }
             other => {
                 let profile_name = other.label();
+                if let Some(profile) = self.profiles.get(&profile_name) {
+                    if let Some(sample) = &profile.sample {
+                        // `profile` borrows `self.profiles` and this call borrows `self.synth`:
+                        // different fields, so the borrow checker allows both at once.
+                        let release = profile.params.release;
+                        self.synth.sample_note_on(pitch, velocity, sample, release, track_filter);
+                        return;
+                    }
+                }
                 let mut params = self
                     .profiles
                     .get(&profile_name)

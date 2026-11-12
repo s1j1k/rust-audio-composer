@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum SampleKind {
@@ -366,6 +367,99 @@ pub struct CustomInstrument {
     pub description: String,
     pub base_kind: SampleKind,
     pub params: SynthParams,
+    /// The one rendered (or imported, or hand-drawn) note this instrument plays back,
+    /// pitch-shifted to every other key. `None` for instruments saved before this existed:
+    /// they are still synthesized live from `params`.
+    #[serde(default)]
+    pub sample: Option<NoteSample>,
+}
+
+/// A single-note sample: the actual audio a custom instrument plays.
+///
+/// Every key is this one recording played faster or slower (like a classic sampler), so
+/// what you see in the waveform editor is exactly what you hear at `root_pitch`.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct NoteSample {
+    /// MIDI pitch the audio was rendered/recorded at (60 = middle C).
+    pub root_pitch: u8,
+    pub sample_rate: u32,
+    /// Mono audio, -1..1. Saved as base64 16-bit PCM: ~4x smaller than a JSON float list.
+    #[serde(with = "pcm16_base64")]
+    pub data: Vec<f32>,
+    /// True once the waveform was hand-edited or imported, i.e. it no longer matches what
+    /// the synth settings would render.
+    #[serde(default)]
+    pub edited: bool,
+}
+
+impl NoteSample {
+    pub fn duration_secs(&self) -> f32 {
+        self.data.len() as f32 / self.sample_rate.max(1) as f32
+    }
+}
+
+/// Serde helper: store `Vec<f32>` audio as base64-encoded little-endian i16.
+/// Hand-rolled (about 40 lines) rather than pulling in a crate for it.
+mod pcm16_base64 {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+    pub fn serialize<S: Serializer>(data: &[f32], s: S) -> Result<S::Ok, S::Error> {
+        let mut bytes = Vec::with_capacity(data.len() * 2);
+        for &v in data {
+            let i = (v.clamp(-1.0, 1.0) * i16::MAX as f32).round() as i16;
+            bytes.extend_from_slice(&i.to_le_bytes());
+        }
+        s.serialize_str(&encode(&bytes))
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<f32>, D::Error> {
+        let text = String::deserialize(d)?;
+        let bytes = decode(&text).map_err(serde::de::Error::custom)?;
+        Ok(bytes
+            .chunks_exact(2)
+            .map(|c| i16::from_le_bytes([c[0], c[1]]) as f32 / i16::MAX as f32)
+            .collect())
+    }
+
+    pub(super) fn encode(bytes: &[u8]) -> String {
+        let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+        for chunk in bytes.chunks(3) {
+            let b = [chunk[0], *chunk.get(1).unwrap_or(&0), *chunk.get(2).unwrap_or(&0)];
+            let n = (b[0] as u32) << 16 | (b[1] as u32) << 8 | b[2] as u32;
+            out.push(ALPHABET[(n >> 18) as usize & 63] as char);
+            out.push(ALPHABET[(n >> 12) as usize & 63] as char);
+            out.push(if chunk.len() > 1 { ALPHABET[(n >> 6) as usize & 63] as char } else { '=' });
+            out.push(if chunk.len() > 2 { ALPHABET[n as usize & 63] as char } else { '=' });
+        }
+        out
+    }
+
+    pub(super) fn decode(text: &str) -> Result<Vec<u8>, String> {
+        let mut out = Vec::with_capacity(text.len() / 4 * 3);
+        let (mut acc, mut bits) = (0u32, 0u32);
+        for c in text.bytes() {
+            let v = match c {
+                b'A'..=b'Z' => c - b'A',
+                b'a'..=b'z' => c - b'a' + 26,
+                b'0'..=b'9' => c - b'0' + 52,
+                b'+' => 62,
+                b'/' => 63,
+                b'=' => break,
+                b'\r' | b'\n' | b' ' => continue,
+                _ => return Err(format!("invalid base64 byte {c}")),
+            };
+            acc = (acc << 6) | v as u32;
+            bits += 6;
+            if bits >= 8 {
+                bits -= 8;
+                out.push((acc >> bits) as u8);
+                acc &= (1 << bits) - 1;
+            }
+        }
+        Ok(out)
+    }
 }
 
 impl CustomInstrument {
@@ -382,6 +476,28 @@ impl CustomInstrument {
 pub struct InstrumentProfile {
     pub name: String,
     pub params: SynthParams,
+    /// Audio to play instead of synthesizing from `params` (custom instruments only).
+    #[serde(skip)]
+    pub sample: Option<ProfileSample>,
+}
+
+/// The playback-side view of a [`NoteSample`]. The audio sits behind an `Arc` so every
+/// voice that plays it shares one buffer: cloning an `Arc` is a counter bump, not a copy.
+#[derive(Clone, Debug)]
+pub struct ProfileSample {
+    pub data: Arc<Vec<f32>>,
+    pub root_pitch: u8,
+    pub sample_rate: f32,
+}
+
+impl ProfileSample {
+    pub fn from_note(note: &NoteSample) -> Self {
+        Self {
+            data: Arc::new(note.data.clone()),
+            root_pitch: note.root_pitch,
+            sample_rate: note.sample_rate as f32,
+        }
+    }
 }
 
 impl InstrumentProfile {
@@ -389,6 +505,7 @@ impl InstrumentProfile {
         Self {
             name: kind.label().to_string(),
             params: default_params_for_kind(kind),
+            sample: None,
         }
     }
 
@@ -396,6 +513,7 @@ impl InstrumentProfile {
         Self {
             name: custom.name.clone(),
             params: custom.params.clone(),
+            sample: custom.sample.as_ref().map(ProfileSample::from_note),
         }
     }
 }
@@ -435,6 +553,7 @@ pub fn default_profiles() -> Vec<InstrumentProfile> {
         profiles.push(InstrumentProfile {
             name: p.label().to_string(),
             params: preset_nominal_params(p),
+            sample: None,
         });
     }
     profiles
@@ -506,5 +625,43 @@ mod tests {
         let p: SynthParams = serde_json::from_str(json).unwrap();
         assert_eq!(p.drive, 0.0);
         assert!(p.preset.is_none());
+    }
+
+    #[test]
+    fn base64_round_trips() {
+        for len in 0..10 {
+            let bytes: Vec<u8> = (0..len).map(|i| (i * 37 + 5) as u8).collect();
+            assert_eq!(pcm16_base64::decode(&pcm16_base64::encode(&bytes)).unwrap(), bytes);
+        }
+        assert_eq!(pcm16_base64::encode(b"Man"), "TWFu");
+        assert_eq!(pcm16_base64::encode(b"Ma"), "TWE=");
+    }
+
+    #[test]
+    fn note_sample_survives_save_and_load() {
+        let custom = CustomInstrument {
+            name: "Test".into(),
+            description: String::new(),
+            base_kind: SampleKind::Piano,
+            params: SynthParams::default(),
+            sample: Some(NoteSample {
+                root_pitch: 57,
+                sample_rate: 44100,
+                data: vec![0.0, 0.5, -0.5, 1.0, -1.0, 0.25],
+                edited: true,
+            }),
+        };
+        let json = serde_json::to_string(&custom).unwrap();
+        let back: CustomInstrument = serde_json::from_str(&json).unwrap();
+        let s = back.sample.unwrap();
+        assert_eq!(s.root_pitch, 57);
+        assert!(s.edited);
+        for (a, b) in s.data.iter().zip([0.0, 0.5, -0.5, 1.0, -1.0, 0.25]) {
+            assert!((a - b).abs() < 1e-4);
+        }
+        // Instruments saved before samples existed still load.
+        let old = r#"{"name":"Old","description":"","base_kind":"Piano","params":{"sample_kind":"Piano",
+            "attack":0.1,"decay":0.1,"sustain":0.5,"release":0.2,"brightness":0.5,"detune":0.0,"filter_cutoff":1.0}}"#;
+        assert!(serde_json::from_str::<CustomInstrument>(old).unwrap().sample.is_none());
     }
 }
