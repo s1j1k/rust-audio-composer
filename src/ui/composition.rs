@@ -51,7 +51,7 @@ fn composition_contents(app: &mut DAWApp, ui: &mut Ui) {
             if let Some(gd) = &genre_guide {
                 for (name, chords, desc) in gd.progressions {
                     let chords: Vec<String> = chords.iter().map(|c| c.to_string()).collect();
-                    progression_card(app, ui, &format!("{} Â· {name}", gd.genre.label()), desc, &chords, key);
+                    progression_card(app, ui, &format!("{} · {name}", gd.genre.label()), desc, &chords, key);
                 }
             }
             for prog in suggest_progressions(key) {
@@ -148,7 +148,7 @@ fn show_genre_tips(app: &mut DAWApp, ui: &mut Ui, gd: &GenreGuide) {
     let (lo, typical, hi) = gd.bpm;
     ui.group(|ui| {
         ui.horizontal_wrapped(|ui| {
-            ui.label(format!("Tempo {lo:.0}â€“{hi:.0} BPM, typically {typical:.0}"));
+            ui.label(format!("Tempo {lo:.0}–{hi:.0} BPM, typically {typical:.0}"));
             let current = app.project.bpm;
             if (current - typical).abs() > 0.5 {
                 if ui
@@ -159,7 +159,7 @@ fn show_genre_tips(app: &mut DAWApp, ui: &mut Ui, gd: &GenreGuide) {
                     app.project.bpm = typical;
                 }
             } else {
-                ui.label(RichText::new("âœ” set").small().color(Color32::LIGHT_GREEN));
+                ui.label(RichText::new("✔ set").small().color(Color32::LIGHT_GREEN));
             }
         });
         ui.label(RichText::new(gd.feel).small());
@@ -183,7 +183,7 @@ fn bullet_section(ui: &mut Ui, title: &str, lines: &[&str], open: bool) {
         .show(ui, |ui| {
             for line in lines {
                 ui.horizontal_wrapped(|ui| {
-                    ui.label(RichText::new("â€¢").small());
+                    ui.label(RichText::new("•").small());
                     ui.label(RichText::new(*line).small());
                 });
             }
@@ -209,7 +209,7 @@ fn progression_card(app: &mut DAWApp, ui: &mut Ui, name: &str, description: &str
         ui.horizontal_wrapped(|ui| {
             for (i, symbol) in chords.iter().enumerate() {
                 if i > 0 {
-                    ui.label(RichText::new("â†’").color(Color32::GRAY));
+                    ui.label(RichText::new("→").color(Color32::GRAY));
                 }
                 let chord_name = resolve_chord(symbol, key).map(|c| c.name()).unwrap_or_default();
                 let text = RichText::new(format!("{symbol}  {chord_name}"));
@@ -315,7 +315,7 @@ fn show_circle_of_fifths(app: &mut DAWApp, ui: &mut Ui) {
     }
 }
 
-/// "C" / "F#" / "Db" (flat names from the circle) â†’ key.
+/// "C" / "F#" / "Db" (flat names from the circle) → key.
 fn parse_key(name: &str, mode: KeyMode) -> Option<Key> {
     let sharp = match name {
         "Db" => "C#",
