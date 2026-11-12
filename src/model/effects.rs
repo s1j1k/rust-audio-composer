@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Per-track DJ-style mix effects (GarageBand-like distance / underwater / phasing).
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TrackEffects {
     /// 0 = up close, 1 = far away / underwater (auto low-pass + reverb).
     pub distance: f32,

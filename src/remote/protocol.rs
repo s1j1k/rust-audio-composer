@@ -31,6 +31,8 @@ pub enum ClientMsg {
     Inst { name: String },
     /// Change the live velocity curve.
     Curve { name: String },
+    /// REC button on the phone: start (with count-in) or stop a take on the desktop.
+    Rec { on: bool },
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -67,6 +69,9 @@ pub enum ServerMsg {
     },
     Curve { name: String },
     Identify,
+    /// Desktop transport state for the phone's REC button: "off", "count" (count-in, with
+    /// beats left) or "rec".
+    Rec { state: String, beats: u32 },
 }
 
 impl ServerMsg {
@@ -142,6 +147,11 @@ mod tests {
         let m: ClientMsg =
             serde_json::from_str(r#"{"t":"hello","name":"iPhone","w":844,"h":390}"#).unwrap();
         assert!(matches!(m, ClientMsg::Hello { .. }));
+        // Phone REC button, and the state the desktop sends back (what app.js reads).
+        let m: ClientMsg = serde_json::from_str(r#"{"t":"rec","on":true}"#).unwrap();
+        assert_eq!(m, ClientMsg::Rec { on: true });
+        let json = ServerMsg::Rec { state: "count".into(), beats: 3 }.to_json();
+        assert_eq!(json, r#"{"t":"rec","state":"count","beats":3}"#);
     }
 
     #[test]

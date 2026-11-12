@@ -17,7 +17,7 @@ impl Default for TrackKind {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Track {
     pub name: String,
     pub instrument: InstrumentId,

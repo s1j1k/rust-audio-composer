@@ -1,4 +1,8 @@
-# Rust Audio Composer
+<img src="assets/icon-512.png" alt="ChorDAW icon: a cursive Ch on staff lines" width="96" align="right">
+
+# ChorDAW
+
+*Chord + DAW. Working name; the repository is still called rust-audio-composer.*
 
 A native desktop Digital Audio Workstation (DAW) written in Rust. Make beats with expressive, velocity-sensitive instruments for trap, hip hop, drum & bass, UK garage and classical. Record multi-track compositions, design your own sounds by describing them, and **play it all wirelessly from your iPhone or iPad**.
 
@@ -61,7 +65,7 @@ What you get:
   - **3D Touch iPhones and Apple Pencil** add real pressure.
   - **Tap strength**, optional: uses the accelerometer to feel how hard you hit (see below).
 - **Sustain pedal** strip, octave and zoom controls, and an instrument picker synced with the selected track. Velocity curves (Soft / Natural / Hard / Fixed) are set on either device.
-- **Recording works.** Arm ⏺ Record on the desktop and play from the phone.
+- **Record from the phone.** Tap **REC** on the phone (or ⏺ Record on the desktop): one bar of count-in, then your playing is recorded onto the selected track. Tap **STOP** to finish. Notes appear live in the timeline bubble and the piano roll as you play.
 - **Chain several devices into one long keyboard.** Tick *Chain devices* in the Remote window, put the devices in left-to-right order with ◀ ▶ (use **Flash** to tell them apart), and keys continue from one screen to the next, sized for the smallest screen.
 - **Safe disconnects.** If a phone locks or drops off Wi-Fi, its notes are released automatically, so nothing gets stuck.
 
@@ -92,6 +96,8 @@ Why local Wi-Fi instead of the internet? Same-room Wi-Fi is a few milliseconds. 
 | Guitar, Bass, Strings, Flute, Brass, Organ, Pad | FreePats | single sample, velocity-tracked tone |
 | Drums | FreePats Synthesizer Percussion | velocity-tracked tone |
 
+Drum tracks only take drum kits and melodic tracks only take melodic instruments, so changing the sound never turns a beat into random pitches. To use both, add one track of each kind.
+
 Multi-velocity instruments crossfade between real soft and hard recordings, so soft playing sounds genuinely softer (rounder, darker), not just quieter. These download once in the background. See [CREDITS.md](CREDITS.md).
 
 Drum kits play from the General MIDI drum map *and* from any octave (C = kick, D = snare, F♯ = closed hat, A♯ = open hat…), so they work from a phone. Closed hats choke open hats.
@@ -106,16 +112,17 @@ Drum kits play from the General MIDI drum map *and* from any octave (C = kick, D
 It runs entirely on your computer.
 
 ### Virtual Piano
-- Clickable piano keyboard window (🎹 button in transport bar)
+- Opens in the **bottom panel** (🎹 Piano, or the *Virtual piano* tab next to Piano roll / Step sequencer); **Pop out** for a separate window, close it to dock it back
 - Click lower on a key for louder; **drag down on a held key for pressure**
-- Computer keyboard mapping: **Z-M** for white keys, **S/D/G/H/J** for black keys
-- Keys played from a phone light up green
+- Computer keyboard: **Z X C V B N M , . /** for white keys, **S D G H J** for black keys (letters are printed on the keys)
+- Pressed keys animate like the phone keyboard: they sink and light up blue (deeper for harder hits); keys played from a phone light up green
 
-### Beat Sequencer (🥁 Drums)
-- **16-step drum grid** with emoji icons per drum (kick, snare, hi-hats, toms, clap, cymbal, shaker)
+### Beat Sequencer (Drums)
+- Built into the main screen: select a drum track and the bottom panel shows the **step sequencer**; switch to **Drum roll** with one click, or **Pop out** the sequencer into its own window
+- **16-step drum grid** with a drawn icon per drum (kick, snare, hi-hats, toms, clap, cymbal, shaker)
 - Click to toggle a hit; **Shift+click** for accent (louder); **right-click** to remove
 - Pick a genre kit for the drum track in the sidebar instrument menu
-- Add drum tracks via **+ Drum Track** in the sidebar or the sequencer panel
+- Add drum tracks via **+ Drum Track** in the sidebar (or the **Drums** button, which adds one if needed)
 
 ### Velocity
 - Notes store **velocity** (0–1), which controls level *and* tone on playback and export
@@ -137,26 +144,46 @@ Effects apply live on the master output; per-track effects apply fully on **WAV 
 
 **Timeline (top)**, one row per track:
 - Click a row to select that track
-- Click anywhere on a row's grid to set the playhead (where recording starts)
-- Notes appear as small blocks whose height reflects pitch
-- The red vertical line is the playhead, shared across all tracks
+- **Snap to playhead:** dragged clips (and their trim and loop handles) stick to the playhead when they get close; hold Alt to drag freely, or untick "Snap to playhead". Right-click a clip → **Move to playhead** jumps the selection there
+- **Move the playhead** by dragging the red ▼ handle in the ruler, the ▲ handle at the bottom, or the line itself (or click the ruler)
+- Each clip ("bubble") shows a **mini piano roll** of its notes; looped repeats are drawn as dimmer copies
+
+**Recording**
+- **⏺ Record** while stopped gives a **one-bar count-in** (with clicks): the playhead rolls up to where you were and recording starts there. While playing, it punches in immediately.
+- Recording **inside an existing bubble overdubs** into it; on empty space it starts a **new bubble**, so one track can hold many takes.
+- Stop with the red **Stop recording** button, **Space**, or **STOP** on the phone.
 
 **Piano Roll (bottom)**, the detailed editor for the selected track:
-- Vertical piano keys on the left
+- Vertical piano keys on the left; keys you're holding light up (blue = mouse/keyboard, green = phone), along with their row
+- **Click** the grid to write a note, like on a score: it goes into the clip at that spot (or extends the one just before it), or a new clip appears. New notes take the length of the last note you resized. Click the ruler to move the playhead
+- **Chord names** run along the top of the grid, read from all your melodic tracks, and hovering shows the chord under the pointer with its notes and bass note. Hovering a bubble in the timeline does the same, so on a bass track you can see what chord you're playing under
+- The keys look like a real keyboard on its side: low notes at the bottom, black keys shorter, octaves marked by a bold **C**
+- **Scroll** over the roll to move up and down by semitones, or use **▼ Octave / ▲ Octave** in Track Controls. The view reaches the whole MIDI range, down to the deepest bass notes
+- Notes being recorded grow in real time at the playhead, and the view scrolls to follow it
 - Click the grid to place notes, or use the virtual piano / phone while recording
 
 ### Multi-Track, Transport, Composition
 - Unlimited tracks; per-track volume, mute, instrument
+- **Add tracks** with **+ Melodic track / + Drum track** just below the last track in the timeline
+- **Delete a track** from Track Controls or by right-clicking its name in the timeline (a track with notes asks first)
+- **Undo / Redo** with the transport buttons, **Ctrl+Z** and **Ctrl+Y** (or Ctrl+Shift+Z). Every edit is undoable: notes, clips, recordings (a whole take is one step), tracks, instruments, mixer settings and tempo. Moving the playhead isn't an edit
+- **Clips:** Ctrl+click or Shift+click bubbles to select several. **Ctrl+C / Ctrl+V** copy and paste at the playhead, **Ctrl+D** duplicates right after, **Delete** (or Backspace) removes the selected clips, and **Merge** combines the selection into one clip (gaps and loop repeats included) that you can then loop as a whole. All of these are also in the bubble's right-click menu and in Track Controls
 - Play / Pause / Stop / Record, BPM (40–240), time signature
-- **🎼 Compose:** key detection, chord progression suggestions, interactive circle of fifths
+- **🎼 Compose:**
+  - **Key:** use the key detected from your melodic notes, or choose any key yourself (also by clicking the circle of fifths)
+  - **Chord progressions:** click chords one at a time (each adds one bar at the playhead and moves on), or **Add all** to drop the whole progression in as one loopable clip
+  - **Genre tips** for trap, hip hop, drum & bass, UK garage and classical: tempo range with a one-click **Set BPM**, arrangement, drum and harmony tips, and genre-flavoured progressions. Drum & bass figures follow [DnB Academy's BPM and structure guide](https://app.dnbacademy.net/learn/drum-and-bass-bpm-and-structure)
+  - Interactive circle of fifths
 
-### Save, Load & Export
-- **💾 Save Project** / **📂 Load Project** (`.rac.json`, includes custom instruments)
-- **🎵 Export WAV** renders the full composition
+### Save, Open & Export (File menu)
+- **New project** (Ctrl+N), **Open project…** (Ctrl+O), **Save** (Ctrl+S, saves back to the same file), **Save as…** (Ctrl+Shift+S). Projects are `.rac.json` files and include your custom instruments
+- **Export WAV…** (Ctrl+E) renders the full composition
+- The window title shows the song name with `*` when there are unsaved changes; New and Open ask before discarding them
+- **Edit** has undo/redo and the clip actions, **View** shows or hides each panel, **Help** opens the guide. Messages appear in the status bar at the bottom
 
 ### Quick tour
 
-Open **📖 Guide** in the transport bar for the in-app guide.
+Open **Help → User guide** for the in-app guide.
 
 | Button | What it does |
 |--------|--------------|
@@ -166,9 +193,10 @@ Open **📖 Guide** in the transport bar for the in-app guide.
 | **▶ Play** | Play back your composition |
 | **🎼 Compose** | Key detection, chord suggestions, circle of fifths |
 | **✨ Sound Designer** | Describe and shape your own instruments |
-| **🥁 Drums** | Beat sequencer |
-| **🎛 DJ** | Mix effects |
-| **⚙ Options** | Interface font and help display |
+| **Drums** | Beat sequencer (bottom panel on drum tracks) |
+| **DJ** | Mix effects |
+| **View → Options…** | Interface font, interface size and help display |
+| **Space** | Play / pause, or stop recording |
 
 ## Keyboard Shortcuts (Piano Window)
 

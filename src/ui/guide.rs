@@ -21,7 +21,7 @@ const SECTIONS: &[Section] = &[
                ⏹ Stop — return playhead to the start.\n\
                ⏮ / ⏭ — jump to start (Home) or end (End).\n\
                ⏺ Record — capture piano input or drum sequencer hits onto the timeline.\n\n\
-               Panel toggles: 🎹 Piano · 🎼 Compose · ✨ AI Instrument · 🥁 Drums · 🎛 DJ · ⚙ Options · 📖 Guide\n\n\
+               Panel toggles: 🎹 Piano · 🎼 Compose · ✨ AI Instrument · Drums · DJ · ⚙ Options · 📖 Guide\n\n\
                💾 Save / 📂 Load — project files (.rac.json).\n\
                🎵 Export WAV — offline mix of all tracks.",
     },
@@ -57,7 +57,7 @@ const SECTIONS: &[Section] = &[
     },
     Section {
         title: "Drum sequencer",
-        body: "Open 🥁 Drums (or add a + Drum Track from the sidebar).\n\n\
+        body: "Open Drums (or add a + Drum Track from the sidebar).\n\n\
                · 16-step grid — click to toggle hits, Shift+click for accent, right-click to clear.\n\
                · ▶ Run loop previews the pattern while you edit.\n\
                · Changes stay in memory until you press ⏺ Record in the transport bar.\n\
@@ -91,7 +91,7 @@ const SECTIONS: &[Section] = &[
     },
     Section {
         title: "DJ tools",
-        body: "Open 🎛 DJ for mix effects on the master bus and the selected track:\n\n\
+        body: "Open DJ for mix effects on the master bus and the selected track:\n\n\
                · Distance / underwater — far-away muffled tone.\n\
                · Reverb — space and depth.\n\
                · Phaser swirl — sweeping motion.\n\

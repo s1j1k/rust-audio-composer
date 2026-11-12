@@ -63,6 +63,74 @@ pub fn handle_zoom_scroll(app: &mut DAWApp, ui: &Ui, hovered: bool) {
     }
 }
 
+/// The movable playhead: click or drag anywhere in the ruler, or grab the red line in the
+/// grid. Draws the line plus a triangular handle in the ruler. While playing, keeps the
+/// playhead on screen by scrolling the enclosing horizontal `ScrollArea`.
+pub fn playhead_scrubber(app: &mut DAWApp, ui: &mut Ui, ruler: Rect, grid: Rect, id: &str) {
+    let origin_x = ruler.min.x;
+    let ruler_resp = ui.interact(ruler, ui.id().with((id, "ruler")), egui::Sense::click_and_drag());
+
+    // Grab handles: ▼ in the ruler at the top, ▲ at the bottom of the tracks, and the line.
+    const S: f32 = 8.0;
+    let x = x_from_beat(app, app.project.playhead_beat, origin_x);
+    let line_hit = Rect::from_min_max(egui::pos2(x - 6.0, grid.min.y), egui::pos2(x + 6.0, grid.max.y));
+    let line_resp = ui.interact(line_hit, ui.id().with((id, "line")), egui::Sense::drag());
+    let bottom_hit = Rect::from_min_max(
+        egui::pos2(x - S - 4.0, grid.max.y - 2.0 * S - 2.0),
+        egui::pos2(x + S + 4.0, grid.max.y),
+    );
+    let bottom_resp = ui.interact(bottom_hit, ui.id().with((id, "bottom")), egui::Sense::drag());
+
+    let active = ruler_resp.dragged() || line_resp.dragged() || bottom_resp.dragged();
+    let hovered = ruler_resp.hovered() || line_resp.hovered() || bottom_resp.hovered();
+    if hovered || active {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+    }
+    if ruler_resp.clicked() || active {
+        if let Some(pos) = ui.ctx().pointer_interact_pos() {
+            app.set_playhead(beat_from_x(app, pos.x, origin_x));
+        }
+    }
+
+    let x = x_from_beat(app, app.project.playhead_beat, origin_x);
+    let hot = active || hovered;
+    let color = if hot { Color32::from_rgb(255, 130, 130) } else { Color32::from_rgb(255, 80, 80) };
+    let painter = ui.painter();
+    painter.line_segment(
+        [egui::pos2(x, grid.min.y), egui::pos2(x, grid.max.y)],
+        egui::Stroke::new(if hot { 3.0 } else { 2.0 }, color),
+    );
+    let outline = egui::Stroke::new(1.0, Color32::from_rgb(120, 20, 20));
+    painter.add(egui::Shape::convex_polygon(
+        vec![
+            egui::pos2(x - S, ruler.min.y + 2.0),
+            egui::pos2(x + S, ruler.min.y + 2.0),
+            egui::pos2(x, ruler.max.y - 1.0),
+        ],
+        color,
+        outline,
+    ));
+    painter.add(egui::Shape::convex_polygon(
+        vec![
+            egui::pos2(x, grid.max.y - 2.0 * S),
+            egui::pos2(x + S, grid.max.y - 1.0),
+            egui::pos2(x - S, grid.max.y - 1.0),
+        ],
+        color,
+        outline,
+    ));
+
+    if app.playing && !active {
+        let view = ui.clip_rect();
+        if x > view.max.x - 30.0 || x < view.min.x {
+            ui.scroll_to_rect(
+                Rect::from_min_size(egui::pos2(x - 40.0, grid.min.y), egui::vec2(1.0, 1.0)),
+                Some(egui::Align::Min),
+            );
+        }
+    }
+}
+
 pub fn draw_time_ruler(app: &DAWApp, painter: &Painter, rect: Rect, total_beats: f32) {
     painter.rect_filled(rect, 0.0, Color32::from_rgb(28, 28, 34));
 

@@ -2,7 +2,8 @@ use crate::app::{ClipDragMode, ClipDragState, DAWApp};
 use crate::ui::constants::{TRACK_HEADER_WIDTH, TRACK_ROW_HEIGHT};
 use crate::ui::grid::{
     beat_from_x, beat_width, draw_beat_grid_lines, draw_song_sections, draw_time_ruler,
-    handle_zoom_scroll, section_color, show_zoom_controls, x_from_beat, RULER_HEIGHT,
+    handle_zoom_scroll, playhead_scrubber, section_color, show_zoom_controls, x_from_beat,
+    RULER_HEIGHT,
 };
 use crate::ui::theme;
 use egui::{Color32, CursorIcon, Rect, Sense, Ui, Vec2};
@@ -15,7 +16,11 @@ pub fn show_multi_track_timeline(app: &mut DAWApp, ui: &mut Ui) {
         "Clips group notes from each recording or edit — drag to move, trim edges to crop (recoverable), \
          drag the loop handle to repeat.",
     );
-    show_zoom_controls(app, ui, "timeline_zoom");
+    ui.horizontal(|ui| {
+        show_zoom_controls(app, ui, "timeline_zoom");
+        ui.checkbox(&mut app.snap_clips_to_playhead, "Snap to playhead")
+            .on_hover_text("Dragged clip edges stick to the playhead when close. Hold Alt to drag freely.");
+    });
     show_song_sections_panel(app, ui);
     ui.add_space(4.0);
 
@@ -89,13 +94,10 @@ pub fn show_multi_track_timeline(app: &mut DAWApp, ui: &mut Ui) {
                     );
 
                     let selected = app.current_track == i;
+                    // Opaque colours only: a translucent tint lets the light theme's white
+                    // window background show through and washes out clips and loops.
                     let bg = if selected {
-                        Color32::from_rgba_unmultiplied(
-                            app.project.tracks[i].color[0],
-                            app.project.tracks[i].color[1],
-                            app.project.tracks[i].color[2],
-                            30,
-                        )
+                        blend(Color32::from_rgb(38, 38, 44), app.project.tracks[i].color, 0.18)
                     } else if i % 2 == 0 {
                         Color32::from_rgb(35, 35, 40)
                     } else {
@@ -140,14 +142,14 @@ pub fn show_multi_track_timeline(app: &mut DAWApp, ui: &mut Ui) {
                     }
                 }
 
-                let playhead_x = x_from_beat(app, app.project.playhead_beat, grid_rect.min.x);
-                painter.line_segment(
-                    [
-                        egui::pos2(playhead_x, grid_rect.min.y),
-                        egui::pos2(playhead_x, grid_rect.max.y),
-                    ],
-                    egui::Stroke::new(2.0_f32, Color32::from_rgb(255, 80, 80)),
-                );
+                playhead_scrubber(app, ui, ruler_rect, grid_rect, "timeline_playhead");
+                if app.clip_snapped && app.clip_drag.is_some() {
+                    let x = x_from_beat(app, app.project.playhead_beat, grid_rect.min.x);
+                    ui.painter_at(grid_rect).line_segment(
+                        [egui::pos2(x, grid_rect.min.y), egui::pos2(x, grid_rect.max.y)],
+                        egui::Stroke::new(3.0_f32, Color32::from_rgb(255, 210, 90)),
+                    );
+                }
 
                 // Row dividers on the header column (same Y as grid rows).
                 let header_painter = ui.painter_at(left_rect);
@@ -162,6 +164,25 @@ pub fn show_multi_track_timeline(app: &mut DAWApp, ui: &mut Ui) {
                     );
                 }
             });
+    });
+
+    // Add tracks right under the last one, where a new row will appear.
+    ui.add_space(4.0);
+    ui.horizontal(|ui| {
+        if ui
+            .button("+ Melodic track")
+            .on_hover_text("Add a track for piano, bass, synths… below the others")
+            .clicked()
+        {
+            app.add_new_track(false);
+        }
+        if ui
+            .button("+ Drum track")
+            .on_hover_text("Add a drum track below the others (opens the step sequencer)")
+            .clicked()
+        {
+            app.add_new_track(true);
+        }
     });
 
     if let Some(origin) = app.timeline_grid_origin_x {
@@ -251,7 +272,7 @@ fn draw_track_header_in_rect(app: &mut DAWApp, ui: &mut Ui, rect: Rect, index: u
     let clip_count = app.project.tracks[index].clips.len();
 
     let bg = if selected {
-        Color32::from_rgba_unmultiplied(track_color[0], track_color[1], track_color[2], 50)
+        blend(Color32::from_rgb(34, 34, 40), track_color, 0.28)
     } else if index % 2 == 0 {
         Color32::from_rgb(32, 32, 38)
     } else {
@@ -266,36 +287,66 @@ fn draw_track_header_in_rect(app: &mut DAWApp, ui: &mut Ui, rect: Rect, index: u
 
     let response = ui.interact(rect, ui.id().with(("track_header", index)), Sense::click());
 
-    ui.allocate_new_ui(
-        egui::UiBuilder::new().max_rect(rect.shrink(6.0)),
-        |ui| {
-            ui.vertical(|ui| {
-                ui.spacing_mut().item_spacing.y = 2.0;
-                ui.horizontal(|ui| {
-                    ui.colored_label(color, "●");
-                    if ui.selectable_label(selected, &track_name).clicked() {
-                        app.select_track(index);
-                    }
-                });
-                ui.horizontal(|ui| {
-                    if ui.checkbox(&mut muted, "M").changed() {
+    // Two lines: [● name ⏺ ..... M] then "instrument · n clips". Clipped to the row so a
+    // long name can never spill into the next track.
+    let inner = rect.shrink2(Vec2::new(8.0, 7.0));
+    ui.allocate_new_ui(egui::UiBuilder::new().max_rect(inner), |ui| {
+        ui.set_clip_rect(inner.intersect(ui.clip_rect()));
+        ui.vertical(|ui| {
+            ui.spacing_mut().item_spacing = Vec2::new(4.0, 3.0);
+            ui.horizontal(|ui| {
+                ui.colored_label(color, "●");
+                let name = ui.selectable_label(selected, egui::RichText::new(&track_name).strong());
+                if name.clicked() {
+                    app.select_track(index);
+                }
+                name.context_menu(|ui| track_context_menu(app, ui, index));
+                if recording {
+                    ui.colored_label(Color32::from_rgb(255, 60, 60), "⏺");
+                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let label = egui::RichText::new("M").small().strong();
+                    let mute = egui::Button::new(if muted {
+                        label.color(Color32::BLACK)
+                    } else {
+                        label
+                    })
+                    .fill(if muted {
+                        Color32::from_rgb(240, 190, 60)
+                    } else {
+                        Color32::from_rgb(55, 55, 64)
+                    })
+                    .min_size(Vec2::new(20.0, 16.0));
+                    if ui.add(mute).on_hover_text("Mute track").clicked() {
+                        muted = !muted;
                         app.project.tracks[index].muted = muted;
                     }
-                    if recording {
-                        ui.colored_label(Color32::from_rgb(255, 60, 60), "⏺");
-                    }
                 });
-                ui.label(
-                    egui::RichText::new(format!("{} · {} clip(s)", instrument_label, clip_count))
-                        .small()
-                        .color(Color32::GRAY),
-                );
             });
-        },
-    );
+            let clips = if clip_count == 1 { "1 clip".to_string() } else { format!("{clip_count} clips") };
+            ui.label(
+                egui::RichText::new(format!("{instrument_label} · {clips}"))
+                    .small()
+                    .color(Color32::GRAY),
+            );
+        });
+    });
 
     if response.clicked() {
         app.select_track(index);
+    }
+    response.context_menu(|ui| track_context_menu(app, ui, index));
+}
+
+/// Right-click menu on a track header.
+fn track_context_menu(app: &mut DAWApp, ui: &mut Ui, index: usize) {
+    if ui
+        .add_enabled(app.project.tracks.len() > 1, egui::Button::new("Delete track"))
+        .on_disabled_hover_text("Can't delete the only track")
+        .clicked()
+    {
+        app.request_delete_track(index);
+        ui.close_menu();
     }
 }
 
@@ -326,8 +377,8 @@ fn draw_track_clips(
     let color = Color32::from_rgb(track_color[0], track_color[1], track_color[2]);
 
     for (clip_idx, clip) in clips.iter().enumerate() {
-        let is_selected =
-            app.current_track == track_index && app.selected_clip == Some(clip_idx);
+        let is_selected = app.current_track == track_index
+            && (app.selected_clip == Some(clip_idx) || app.selected_clip_ids.contains(&clip.id));
 
         let vis_len = clip.visible_length();
         let x0 = x_from_beat(app, clip.start_beat, inner.min.x);
@@ -337,6 +388,7 @@ fn draw_track_clips(
             egui::pos2(x1.max(x0 + 12.0), inner.max.y),
         );
 
+        let is_recording = app.recording && app.recording_clip == Some((track_index, clip_idx));
         let fill = if is_selected {
             Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 200)
         } else {
@@ -346,17 +398,25 @@ fn draw_track_clips(
         painter.rect_stroke(
             clip_rect,
             6.0,
-            egui::Stroke::new(
-                if is_selected { 2.0_f32 } else { 1.0_f32 },
-                if clip.loop_enabled {
-                    Color32::from_rgb(120, 230, 160)
-                } else {
-                    color.gamma_multiply(1.3)
-                },
-            ),
+            if is_recording {
+                egui::Stroke::new(2.5_f32, Color32::from_rgb(255, 70, 70))
+            } else {
+                egui::Stroke::new(
+                    if is_selected { 2.0_f32 } else { 1.0_f32 },
+                    if is_selected {
+                        Color32::WHITE
+                    } else if clip.loop_enabled {
+                        Color32::from_rgb(120, 230, 160)
+                    } else {
+                        color.gamma_multiply(1.3)
+                    },
+                )
+            },
         );
 
-        let label = if clip.loop_enabled {
+        let label = if is_recording {
+            format!("● REC {}", if app.recording_overdub { "overdub" } else { "" })
+        } else if clip.loop_enabled {
             format!("↻ {}", clip.name)
         } else {
             clip.name.clone()
@@ -374,21 +434,30 @@ fn draw_track_clips(
         if clip.loop_enabled {
             let loop_x1 = x_from_beat(app, clip.loop_end_beat, inner.min.x);
             if loop_x1 > x1 + 4.0 {
-                let loop_rect = Rect::from_min_max(
-                    egui::pos2(x1, inner.min.y + 2.0),
-                    egui::pos2(loop_x1, inner.max.y - 2.0),
-                );
-                painter.rect_filled(
-                    loop_rect,
-                    4.0,
-                    Color32::from_rgba_unmultiplied(80, 200, 120, 35),
-                );
+                // Each repeat is drawn as a dimmer copy of the bubble (opaque, so it reads
+                // on light and dark themes) with the same mini piano roll inside.
+                let one = (x1 - x0).max(4.0);
+                let dim = blend(Color32::from_rgb(38, 38, 44), [color.r(), color.g(), color.b()], 0.45);
+                let mut rx = x1;
+                let mut n = 0;
+                while rx < loop_x1 - 1.0 && n < 512 {
+                    let rep = Rect::from_min_max(
+                        egui::pos2(rx, inner.min.y + 1.0),
+                        egui::pos2((rx + one).min(loop_x1), inner.max.y - 1.0),
+                    );
+                    painter.rect_filled(rep, 5.0, dim);
+                    dashed_outline(painter, rep, Color32::from_rgb(140, 235, 170));
+                    let full = Rect::from_min_size(rep.min, Vec2::new(one, rep.height()));
+                    draw_clip_note_preview(&painter.with_clip_rect(rep), &clip, full, color);
+                    rx += one;
+                    n += 1;
+                }
                 painter.text(
-                    loop_rect.left_top() + Vec2::new(4.0, 2.0),
+                    egui::pos2(x1 + 6.0, inner.min.y + 4.0),
                     egui::Align2::LEFT_TOP,
-                    "loop",
+                    "↻ loop",
                     theme::font(theme::FONT_XS),
-                    Color32::from_rgb(120, 230, 160),
+                    Color32::from_rgb(160, 245, 190),
                 );
             }
         }
@@ -399,28 +468,61 @@ fn draw_track_clips(
     }
 }
 
+/// Opaque mix of `base` toward an RGB colour (`t` = 0 → base, 1 → colour).
+fn blend(base: Color32, rgb: [u8; 3], t: f32) -> Color32 {
+    let mix = |a: u8, b: u8| (a as f32 + (b as f32 - a as f32) * t).round() as u8;
+    Color32::from_rgb(mix(base.r(), rgb[0]), mix(base.g(), rgb[1]), mix(base.b(), rgb[2]))
+}
+
+fn dashed_outline(painter: &egui::Painter, r: Rect, color: Color32) {
+    let stroke = egui::Stroke::new(1.0, color);
+    let pts = [r.left_top(), r.right_top(), r.right_bottom(), r.left_bottom(), r.left_top()];
+    painter.extend(egui::Shape::dashed_line(&pts, stroke, 4.0, 3.0));
+}
+
+/// A miniature piano roll inside the bubble: x = time, y = pitch (high at the top),
+/// width = note length, brightness = velocity. Pitch range fits the clip's own notes.
 fn draw_clip_note_preview(
     painter: &egui::Painter,
     clip: &crate::model::NoteClip,
     clip_rect: Rect,
-    color: Color32,
+    _color: Color32,
 ) {
-    if clip.notes.is_empty() {
+    let visible: Vec<&crate::model::Note> =
+        clip.notes.iter().filter(|n| clip.note_is_visible(n)).collect();
+    if visible.is_empty() {
         return;
     }
-    let vis_len = clip.visible_length().max(0.01);
-    for note in &clip.notes {
-        if !clip.note_is_visible(note) {
-            continue;
-        }
-        let rel = (note.start_beat - clip.trim_start) / vis_len;
-        let nx = clip_rect.min.x + rel as f32 * clip_rect.width();
-        let bar_h = 4.0;
-        let ny = clip_rect.center().y - bar_h * 0.5;
+    // Below the name label, with a little padding.
+    let area = Rect::from_min_max(
+        egui::pos2(clip_rect.min.x + 3.0, clip_rect.min.y + 17.0),
+        egui::pos2(clip_rect.max.x - 3.0, clip_rect.max.y - 3.0),
+    );
+    if area.height() < 4.0 || area.width() < 4.0 {
+        return;
+    }
+    let lo = visible.iter().map(|n| n.pitch).min().unwrap_or(60) as f32;
+    let hi = visible.iter().map(|n| n.pitch).max().unwrap_or(60) as f32;
+    // At least an octave of range so a single repeated note sits mid-height.
+    let span = (hi - lo).max(12.0);
+    let mid = (hi + lo) * 0.5;
+    let (lo, hi) = (mid - span * 0.5, mid + span * 0.5);
+    let row_h = (area.height() / (span + 1.0)).clamp(1.5, 4.0);
+    let vis_len = clip.visible_length().max(0.01) as f32;
+    let painter = painter.with_clip_rect(area.intersect(painter.clip_rect()));
+
+    for note in visible {
+        let t0 = (note.start_beat - clip.trim_start) as f32 / vis_len;
+        let t1 = (note.end_beat() - clip.trim_start) as f32 / vis_len;
+        let x0 = area.min.x + t0 * area.width();
+        let x1 = (area.min.x + t1 * area.width()).max(x0 + 2.0);
+        let y_frac = (hi - note.pitch as f32) / (hi - lo).max(1.0);
+        let y = area.min.y + y_frac * (area.height() - row_h);
+        let alpha = (120.0 + 135.0 * note.velocity.clamp(0.0, 1.0)) as u8;
         painter.rect_filled(
-            Rect::from_min_size(egui::pos2(nx, ny), Vec2::new(3.0, bar_h)),
+            Rect::from_min_max(egui::pos2(x0, y), egui::pos2(x1, y + row_h)),
             1.0,
-            color.gamma_multiply(0.7),
+            Color32::from_rgba_unmultiplied(255, 255, 255, alpha),
         );
     }
 }
@@ -477,14 +579,41 @@ fn interact_clip(
     if body_resp.hovered() || body_resp.dragged() {
         ui.ctx().set_cursor_icon(CursorIcon::Grab);
     }
+    if body_resp.hovered() && app.clip_drag.is_none() {
+        let melodic = app.project.tracks.get(track_index).map(|t| !t.is_drum()).unwrap_or(false);
+        if let (true, Some(pos)) = (melodic, body_resp.hover_pos()) {
+            let beat = beat_from_x(app, pos.x, grid_origin_x);
+            let mut spans = Vec::new();
+            crate::app::clip_spans(clip, app.project.total_beats, &mut spans);
+            let chord = crate::music::chord_segments(&spans)
+                .into_iter()
+                .find(|(a, b, _)| beat >= *a && beat < *b);
+            let text = match chord {
+                Some((_, _, c)) => format!(
+                    "{}: {}  ({})\nBass note: {}",
+                    clip.name,
+                    c.name,
+                    c.tone_names(),
+                    crate::music::NOTE_NAMES[c.root as usize]
+                ),
+                None => clip.name.clone(),
+            };
+            body_resp.clone().on_hover_text_at_pointer(text);
+        }
+    }
     if trim_start_resp.hovered() || trim_end_resp.hovered() || loop_resp.hovered() {
         ui.ctx().set_cursor_icon(CursorIcon::ResizeHorizontal);
     }
 
     if body_resp.clicked() {
-        app.select_track(track_index);
-        app.selected_clip = Some(clip_idx);
+        let add = ui.input(|i| i.modifiers.command || i.modifiers.shift);
+        if add {
+            app.toggle_clip_selected(track_index, clip_idx);
+        } else {
+            app.select_single_clip(track_index, clip_idx);
+        }
     }
+    body_resp.context_menu(|ui| clip_context_menu(app, ui, track_index, clip_idx));
 
     if trim_start_resp.drag_started() {
         app.selected_clip = Some(clip_idx);
@@ -564,6 +693,13 @@ pub fn handle_clip_drag(app: &mut DAWApp, ui: &mut Ui, grid_origin_x: f32) {
     let track_idx = drag.track_index;
     let clip_idx = drag.clip_index;
 
+    // Magnet: an edge within ~10 px of the playhead lands exactly on it.
+    let playhead = app.project.playhead_beat;
+    let snap_on = app.snap_clips_to_playhead && !ui.input(|i| i.modifiers.alt);
+    let reach = 10.0 / beat_width(app).max(1.0) as f64;
+    let near = |b: f64| snap_on && (b - playhead).abs() <= reach;
+    let mut snapped = false;
+
     if let Some(clip) = app
         .project
         .tracks
@@ -572,8 +708,16 @@ pub fn handle_clip_drag(app: &mut DAWApp, ui: &mut Ui, grid_origin_x: f32) {
     {
         match drag.mode {
             ClipDragMode::Move => {
-                let new_start = (beat - drag.grab_beat).max(0.0);
-                let delta = new_start - drag.orig_start;
+                let mut new_start = (beat - drag.grab_beat).max(0.0);
+                let len = clip.visible_length();
+                if near(new_start) {
+                    new_start = playhead;
+                    snapped = true;
+                } else if near(new_start + len) && playhead - len >= 0.0 {
+                    new_start = playhead - len;
+                    snapped = true;
+                }
+                let delta = new_start - clip.start_beat;
                 clip.offset_on_timeline(delta);
             }
             ClipDragMode::TrimStart => {
@@ -581,13 +725,76 @@ pub fn handle_clip_drag(app: &mut DAWApp, ui: &mut Ui, grid_origin_x: f32) {
                 clip.set_trim_start(rel.min(clip.source_length - clip.trim_end - 0.25));
             }
             ClipDragMode::TrimEnd => {
+                let beat = if near(beat) {
+                    snapped = true;
+                    playhead
+                } else {
+                    beat
+                };
                 let rel_end = (beat - clip.start_beat).max(clip.trim_start + 0.25);
                 clip.set_trim_end((clip.source_length - rel_end).max(0.0));
             }
             ClipDragMode::ExtendLoop => {
+                let beat = if near(beat) {
+                    snapped = true;
+                    playhead
+                } else {
+                    beat
+                };
                 clip.loop_enabled = true;
                 clip.set_loop_end(beat.max(clip.start_beat + clip.visible_length()));
             }
         }
+    }
+    app.clip_snapped = snapped;
+}
+
+/// Right-click menu on a clip bubble. Right-clicking a clip outside the selection
+/// selects just that clip first, like most editors.
+fn clip_context_menu(app: &mut DAWApp, ui: &mut Ui, track_index: usize, clip_idx: usize) {
+    let in_selection = app.current_track == track_index
+        && app.selected_clip_indices().contains(&clip_idx);
+    if !in_selection {
+        app.select_single_clip(track_index, clip_idx);
+    }
+    let n = app.selected_clip_indices().len();
+    let what = if n == 1 { "clip".to_string() } else { format!("{n} clips") };
+    if ui.button(format!("Copy {what}  (Ctrl+C)")).clicked() {
+        if let Some(json) = app.copy_selected_clips() {
+            ui.ctx().copy_text(json);
+        }
+        ui.close_menu();
+    }
+    if ui
+        .add_enabled(app.clip_clipboard.is_some(), egui::Button::new("Paste at playhead  (Ctrl+V)"))
+        .clicked()
+    {
+        app.paste_clips_at_playhead();
+        ui.close_menu();
+    }
+    if ui.button(format!("Duplicate {what}  (Ctrl+D)")).clicked() {
+        app.duplicate_selected_clips();
+        ui.close_menu();
+    }
+    if ui.button(format!("Move {what} to playhead")).clicked() {
+        app.move_selected_clips_to_playhead();
+        ui.close_menu();
+    }
+    if ui
+        .add_enabled(n >= 2, egui::Button::new(format!("Merge {what} into one")))
+        .on_disabled_hover_text("Ctrl+click or Shift+click more clips to merge them")
+        .clicked()
+    {
+        app.merge_selected_clips();
+        ui.close_menu();
+    }
+    if ui.button("Select all clips on track").clicked() {
+        app.select_all_clips();
+        ui.close_menu();
+    }
+    ui.separator();
+    if ui.button(format!("Delete {what}")).clicked() {
+        app.delete_selected_clips();
+        ui.close_menu();
     }
 }

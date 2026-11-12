@@ -279,6 +279,16 @@ mod tests {
         assert!(VelocityCurve::Hard.apply(0.5) < VelocityCurve::Natural.apply(0.5));
     }
 
+    /// A key press on the default instrument must reach the speakers: this is the path the
+    /// virtual piano uses (`play_note_for_instrument` then `next_sample` in the audio callback).
+    #[test]
+    fn piano_key_press_is_audible() {
+        let mut eng = AudioEngine::new(44_100.0);
+        eng.play_note_for_instrument(60, 0.8, &InstrumentId::Piano, 1.0);
+        let energy: f32 = (0..4_410).map(|_| eng.next_sample().abs()).sum();
+        assert!(energy > 1.0, "piano note was silent (energy {energy})");
+    }
+
     #[test]
     fn drum_map_covers_every_key() {
         for p in 0..=127u8 {

@@ -90,6 +90,9 @@ function connect() {
       case 'identify':
         flash();
         break;
+      case 'rec':
+        setRec(m.state, m.beats);
+        break;
     }
   };
 }
@@ -157,6 +160,21 @@ function setCurve(name, notify) {
   $('curve').value = name;
   if (notify) send({ t: 'curve', name });
 }
+
+// ---------- record button (mirrors the desktop transport) ----------
+let recState = 'off';
+function setRec(state, beats) {
+  recState = state || 'off';
+  const b = $('rec');
+  b.classList.toggle('count', recState === 'count');
+  b.classList.toggle('on', recState === 'rec');
+  $('rec-text').textContent =
+    recState === 'count' ? `${beats || ''}…` : recState === 'rec' ? 'STOP' : 'REC';
+}
+$('rec').addEventListener('click', () => {
+  // Tap to start (1-bar count-in on the desktop), tap again to stop / cancel.
+  send({ t: 'rec', on: recState === 'off' });
+});
 
 // ---------- keyboard geometry ----------
 let keys = [];      // { note, black, x, w, h, el }
