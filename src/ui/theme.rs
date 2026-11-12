@@ -47,6 +47,7 @@ impl UiFontFamily {
 }
 
 const SYSTEM_SANS: &str = "system-sans";
+const PHOSPHOR: &str = "phosphor";
 
 /// The platform's own UI typeface (Segoe UI, Helvetica/SF, Noto/DejaVu Sans), read once from
 /// disk. egui's bundled Ubuntu-Light is the fallback, so a missing file is harmless.
@@ -87,9 +88,15 @@ pub fn apply(ctx: &egui::Context, ui_font: UiFontFamily) {
             std::sync::Arc::new(egui::FontData::from_static(bytes)),
         );
     }
-    fonts
-        .families
-        .insert(FontFamily::Proportional, ui_font.proportional_stack(system.is_some()));
+    // Phosphor icons (MIT) for track icons and DJ controls; glyphs live in the
+    // private-use area so they never shadow normal text.
+    fonts.font_data.insert(
+        PHOSPHOR.to_owned(),
+        std::sync::Arc::new(egui_phosphor::Variant::Regular.font_data()),
+    );
+    let mut stack = ui_font.proportional_stack(system.is_some());
+    stack.insert(1.min(stack.len()), PHOSPHOR.to_owned());
+    fonts.families.insert(FontFamily::Proportional, stack);
 
     ctx.set_fonts(fonts);
 

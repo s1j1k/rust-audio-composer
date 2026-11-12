@@ -27,7 +27,8 @@ use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::Router;
 use futures_util::{SinkExt, StreamExt};
-use protocol::{chain_layouts, ClientMsg, InstrumentChoice, Layout, ServerMsg};
+use crate::model::{FxParam, XfadeSide};
+use protocol::{chain_layouts, ClientMsg, DjSnapshot, InstrumentChoice, Layout, ServerMsg};
 use std::collections::HashSet;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -56,6 +57,15 @@ pub enum RemoteEvent {
     SetCurve(VelocityCurve),
     /// Phone REC button pressed: start (true) or stop (false) a take.
     Record(bool),
+    /// DJ controls from a phone.
+    DjParam { ch: u8, param: FxParam, v: f32 },
+    Crossfader(f32),
+    DjSide { ch: u8, side: XfadeSide },
+    DjLoad { ch: u8, track: Option<usize> },
+    DjMute { ch: u8, on: bool },
+    DjWrite(bool),
+    Play(bool),
+    MixRecord(bool),
     DevicesChanged,
 }
 
@@ -93,6 +103,10 @@ struct Settings {
     curve: VelocityCurve,
     /// Last REC state sent to phones ("off" / "count" / "rec") and count-in beats left.
     rec: (String, u32),
+    /// Last DJ state sent to phones, and when.
+    dj: DjSnapshot,
+    dj_sent: Option<Instant>,
+    meters_sent: Option<Instant>,
 }
 
 struct Shared {
@@ -215,6 +229,9 @@ impl RemoteServer {
                 current: String::new(),
                 curve,
                 rec: ("off".to_string(), 0),
+                dj: DjSnapshot::default(),
+                dj_sent: None,
+                meters_sent: None,
             }),
             next_id: AtomicU64::new(1),
             ca_der,
@@ -386,6 +403,59 @@ impl RemoteServer {
         }
     }
 
+    /// Mirror the DJ mixer on phones. Sent when it changes, at most ~20 times a second
+    /// (automation can change values every frame).
+    pub fn set_dj_state(&self, snap: DjSnapshot) {
+        let msg = {
+            let mut s = self.shared.settings.lock().unwrap_or_else(|e| e.into_inner());
+            let due = s
+                .dj_sent
+                .map(|t| t.elapsed() >= std::time::Duration::from_millis(50))
+                .unwrap_or(true);
+            if s.dj == snap || !due {
+                None
+            } else {
+                s.dj = snap.clone();
+                s.dj_sent = Some(Instant::now());
+                Some(ServerMsg::Dj(snap))
+            }
+        };
+        if let Some(msg) = msg {
+            self.shared.broadcast(&msg);
+        }
+    }
+
+    /// VU meters for the phone (~15 updates a second, only while a device is connected).
+    pub fn set_meters(&self, levels: Vec<f32>, master: f32) {
+        let has_devices = !self
+            .shared
+            .devices
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_empty();
+        if !has_devices {
+            return;
+        }
+        let due = {
+            let mut s = self.shared.settings.lock().unwrap_or_else(|e| e.into_inner());
+            let due = s
+                .meters_sent
+                .map(|t| t.elapsed() >= std::time::Duration::from_millis(66))
+                .unwrap_or(true);
+            if due {
+                s.meters_sent = Some(Instant::now());
+            }
+            due
+        };
+        if due {
+            let round = |x: f32| (x * 1000.0).round() / 1000.0;
+            self.shared.broadcast(&ServerMsg::Meters {
+                l: levels.into_iter().map(round).collect(),
+                m: round(master),
+            });
+        }
+    }
+
     pub fn chain(&self) -> (bool, u8) {
         let s = self.shared.settings.lock().unwrap_or_else(|e| e.into_inner());
         (s.chain, s.chain_start)
@@ -497,6 +567,7 @@ async fn handle_socket(socket: WebSocket, shared: Arc<Shared>, addr: SocketAddr)
             }
             .to_json(),
         );
+        let _ = tx.send(ServerMsg::Dj(s.dj.clone()).to_json());
     }
     shared
         .devices
@@ -613,6 +684,32 @@ async fn handle_socket(socket: WebSocket, shared: Arc<Shared>, addr: SocketAddr)
             ClientMsg::Rec { on } => {
                 shared.send_event(RemoteEvent::Record(on));
             }
+            ClientMsg::Dj { ch, p, v } => {
+                if let Some(param) = FxParam::from_key(&p) {
+                    if v.is_finite() {
+                        shared.send_event(RemoteEvent::DjParam { ch, param, v });
+                    }
+                }
+            }
+            ClientMsg::Xf { v } => {
+                if v.is_finite() {
+                    shared.send_event(RemoteEvent::Crossfader(v.clamp(-1.0, 1.0)));
+                }
+            }
+            ClientMsg::DjSide { ch, side } => {
+                if let Some(side) = XfadeSide::from_key(&side) {
+                    shared.send_event(RemoteEvent::DjSide { ch, side });
+                }
+            }
+            ClientMsg::DjLoad { ch, track } => {
+                shared.send_event(RemoteEvent::DjLoad { ch, track });
+            }
+            ClientMsg::DjMute { ch, on } => {
+                shared.send_event(RemoteEvent::DjMute { ch, on });
+            }
+            ClientMsg::DjWrite { on } => shared.send_event(RemoteEvent::DjWrite(on)),
+            ClientMsg::Play { on } => shared.send_event(RemoteEvent::Play(on)),
+            ClientMsg::MixRec { on } => shared.send_event(RemoteEvent::MixRecord(on)),
             ClientMsg::Curve { name } => {
                 if let Some(c) = VelocityCurve::from_key(&name) {
                     if let Ok(mut eng) = shared.engine.lock() {

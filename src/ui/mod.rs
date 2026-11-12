@@ -4,7 +4,8 @@ mod guide;
 mod hints;
 mod options;
 pub mod theme;
-mod dj_panel;
+mod dj_mode;
+pub mod dj_widgets;
 mod drum_sequencer;
 pub mod drum_icons;
 pub mod grid;
@@ -18,7 +19,7 @@ mod track_panel;
 mod transport;
 
 pub use composition::show_composition_panel;
-pub use dj_panel::show_dj_panel;
+pub use dj_mode::{show_dj_mode, DJ_PANEL_HEIGHT};
 pub use guide::show_user_guide;
 pub use drum_sequencer::{show_drum_sequencer, show_drum_sequencer_body};
 pub use instrument_designer::show_instrument_designer;

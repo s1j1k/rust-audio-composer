@@ -106,7 +106,9 @@ pub struct DAWApp {
     pub drum_view_sequencer: bool,
     /// The sequencer is in its own floating window instead of the bottom panel.
     pub sequencer_popped_out: bool,
+    /// DJ mode: the mixer replaces the piano roll in the bottom panel.
     pub show_dj_panel: bool,
+    pub dj: crate::dj::DjState,
     pub show_options: bool,
     pub show_user_guide: bool,
 
@@ -115,11 +117,12 @@ pub struct DAWApp {
 
     pub held_notes: HashSet<u8>,
     pub held_note_details: HashMap<u8, HeldNoteState>,
-    /// Pitches sounding from playback, with the beat each should stop at. Keyed per
-    /// pitch, but the end comes from the note *instance* that started it: checking each
-    /// note's own end against "is this pitch sounding" cut off the next note of the same
-    /// pitch, and every loop repeat, the moment it started.
-    pub playback_notes_active: HashMap<u8, f64>,
+    /// Pitches sounding from playback as `(track, pitch)` (each track plays on its own
+    /// bus), with the beat each should stop at. The end comes from the note *instance*
+    /// that started it: checking each note's own end against "is this pitch sounding"
+    /// cut off the next note of the same pitch, and every loop repeat, the moment it
+    /// started.
+    pub playback_notes_active: HashMap<(usize, u8), f64>,
     pub playback_events_done: HashSet<PlaybackEventKey>,
     /// Undo/redo snapshots. Created on the first frame (after start-up migration) and
     /// reset when a project is loaded, so neither shows up as an undoable edit.
@@ -238,6 +241,13 @@ pub struct DAWApp {
 
 impl Default for DAWApp {
     fn default() -> Self {
+        Self::build(true)
+    }
+}
+
+impl DAWApp {
+    /// `open_audio = false` builds the app without touching the sound card (tests).
+    pub(crate) fn build(open_audio: bool) -> Self {
         // Build the engine at the device's real sample rate from the start, so samples are
         // decoded once at the right rate (and pitch).
         let sample_rate = probe_output_sample_rate().unwrap_or(44_100.0);
@@ -260,6 +270,7 @@ impl Default for DAWApp {
             drum_view_sequencer: true,
             sequencer_popped_out: false,
             show_dj_panel: false,
+            dj: Default::default(),
             show_options: false,
             show_user_guide: false,
 
@@ -359,16 +370,33 @@ impl Default for DAWApp {
             designer: Default::default(),
         };
 
-        if let Ok(stream) = app.setup_audio_stream() {
-            app.audio_stream = Some(stream);
+        if open_audio {
+            if let Ok(stream) = app.setup_audio_stream() {
+                app.audio_stream = Some(stream);
+            }
         }
 
         app.sync_instrument_to_track();
         app.migrate_tracks();
         // `cargo run --release -- --remote` opens the phone keyboard server at launch.
-        if std::env::args().any(|a| a == "--remote") {
+        if open_audio && std::env::args().any(|a| a == "--remote") {
             app.show_remote = true;
             app.start_remote();
+        }
+        // `cargo run -- my-song.rac.json` opens a project; `--dj` starts in DJ mode.
+        if open_audio {
+            if let Some(path) = std::env::args().skip(1).find(|a| a.ends_with(".json")) {
+                match SavedProject::load_from_path(std::path::Path::new(&path)) {
+                    Ok(saved) => {
+                        app.apply_saved_project(saved);
+                        app.project_file_path = Some(path);
+                    }
+                    Err(e) => app.status_error = Some(e),
+                }
+            }
+            if std::env::args().any(|a| a == "--dj") {
+                app.open_dj_mode();
+            }
         }
         app
     }
@@ -1332,7 +1360,6 @@ impl DAWApp {
             for (pitch, _) in due {
                 let in_use = self.held_notes.contains(&pitch)
                     || self.remote_held.contains_key(&pitch)
-                    || self.playback_notes_active.contains_key(&pitch)
                     || self.preview_releases.iter().any(|&(p, _)| p == pitch);
                 if !in_use {
                     eng.stop_note(pitch);
@@ -1568,8 +1595,8 @@ impl DAWApp {
 
     fn stop_playback_notes(&mut self) {
         if let Ok(mut eng) = self.audio_engine.lock() {
-            for (pitch, _) in self.playback_notes_active.drain() {
-                eng.stop_note(pitch);
+            for ((track, pitch), _) in self.playback_notes_active.drain() {
+                eng.stop_track_note(track, pitch);
             }
         }
         self.playback_events_done.clear();
@@ -1584,6 +1611,10 @@ impl DAWApp {
         let dt = now.duration_since(self.last_frame).as_secs_f64();
         self.last_frame = now;
 
+        if self.dj.scrubbing {
+            // A hand is on the platter: the playhead goes where it's pushed.
+            return;
+        }
         self.project.playhead_beat += dt * self.project.beats_per_second();
         if self.project.playhead_beat >= self.project.total_beats {
             self.project.playhead_beat = 0.0;
@@ -1623,9 +1654,11 @@ impl DAWApp {
                             if let Ok(mut eng) = self.audio_engine.lock() {
                                 let inst = track.instrument.clone();
                                 let filter = track.effects.effective_lowpass();
-                                eng.play_note_for_instrument(
+                                // Fader, crossfader and effects are on the track's bus.
+                                eng.play_track_note(
+                                    track_idx,
                                     note.pitch,
-                                    note.velocity * track.volume,
+                                    note.velocity,
                                     &inst,
                                     filter,
                                 );
@@ -1633,9 +1666,12 @@ impl DAWApp {
                             self.playback_events_done.insert(event_key);
                             if !is_drum {
                                 let end = trigger_beat + note.duration_beats;
-                                let slot = self.playback_notes_active.entry(note.pitch).or_insert(end);
-                                // If the same pitch is already sounding (another track, or
-                                // overlapping notes), stop when the last of them ends.
+                                let slot = self
+                                    .playback_notes_active
+                                    .entry((track_idx, note.pitch))
+                                    .or_insert(end);
+                                // If the same pitch is already sounding on this track
+                                // (overlapping notes), stop when the last of them ends.
                                 *slot = slot.max(end);
                             }
                         }
@@ -1646,16 +1682,16 @@ impl DAWApp {
         }
 
         // Note-offs: each sounding pitch stops at the end of the note that started it.
-        let ended: Vec<u8> = self
+        let ended: Vec<(usize, u8)> = self
             .playback_notes_active
             .iter()
             .filter(|&(_, &end)| beat >= end)
-            .map(|(&p, _)| p)
+            .map(|(&k, _)| k)
             .collect();
         if !ended.is_empty() {
             if let Ok(mut eng) = self.audio_engine.lock() {
-                for p in &ended {
-                    eng.stop_note(*p);
+                for &(track, pitch) in &ended {
+                    eng.stop_track_note(track, pitch);
                 }
             }
             for p in ended {
@@ -2149,7 +2185,7 @@ impl DAWApp {
             .get(self.current_track)
             .map(|t| t.is_drum())
             .unwrap_or(false);
-        let docked = self.drum_view_sequencer && !self.bottom_keyboard;
+        let docked = self.drum_view_sequencer && !self.bottom_keyboard && !self.dj_docked();
         let visible = on_drums && (docked || self.sequencer_popped_out);
         if visible && !self.show_drum_sequencer {
             self.show_drum_sequencer = true;
@@ -2554,6 +2590,7 @@ impl eframe::App for DAWApp {
         self.update_count_in();
         self.update_recording_live();
         self.update_sequencer_preview();
+        self.dj_frame();
         let (live_instrument, live_filter) = self.current_track_playback_info();
         if let Ok(mut eng) = self.audio_engine.lock() {
             eng.master_volume = self.audio.master_volume;
@@ -2644,16 +2681,6 @@ impl eframe::App for DAWApp {
             }
         }
 
-        if self.show_dj_panel {
-            let mut show = self.show_dj_panel;
-            egui::Window::new("DJ Tools")
-                .open(&mut show)
-                .default_size([360.0, 480.0])
-                .show(ctx, |ui| {
-                    crate::ui::show_dj_panel(self, ui);
-                });
-            self.show_dj_panel = show;
-        }
 
         if self.show_options {
             let mut show = self.show_options;
@@ -2677,6 +2704,22 @@ impl eframe::App for DAWApp {
             self.show_user_guide = show;
         }
 
+        if self.show_dj_panel && self.dj.popped_out {
+            let mut open = true;
+            egui::Window::new("DJ Mode")
+                .open(&mut open)
+                .default_size([1100.0, 420.0])
+                .show(ctx, |ui| {
+                    crate::ui::show_dj_mode(self, ui);
+                });
+            if !open {
+                // Closing the window docks DJ mode back into the bottom panel.
+                self.dj.popped_out = false;
+                self.bottom_keyboard = false;
+                self.sync_sequencer_visibility();
+            }
+        }
+
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.vertical(|ui| {
                 show_timeline_section(self, ui);
@@ -2690,7 +2733,12 @@ impl eframe::App for DAWApp {
 fn show_timeline_section(app: &mut DAWApp, ui: &mut egui::Ui) {
     // Reserve the whole bottom panel: its header rows (title, zoom, hint ≈ 100 px) plus the
     // roll itself, so the lowest piano-roll rows don't run off the bottom of the window.
-    let available = ui.available_height() - crate::ui::constants::PIANO_ROLL_PANEL_HEIGHT - 100.0;
+    let bottom = if app.dj_docked() {
+        crate::ui::DJ_PANEL_HEIGHT + 34.0
+    } else {
+        crate::ui::constants::PIANO_ROLL_PANEL_HEIGHT + 100.0
+    };
+    let available = ui.available_height() - bottom;
     egui::ScrollArea::vertical()
         .max_height(available.max(120.0))
         .show(ui, |ui| {
@@ -2868,6 +2916,16 @@ impl DAWApp {
                 None => ("off", 0),
             };
             server.set_record_state(state, beats);
+            server.set_dj_state(self.dj_remote_snapshot());
+            let levels: Vec<f32> = (0..crate::model::DJ_CHANNELS)
+                .map(|ch| {
+                    self.project
+                        .track_on_channel(ch)
+                        .and_then(|i| self.dj.levels.get(i).copied())
+                        .unwrap_or(0.0)
+                })
+                .collect();
+            server.set_meters(levels, self.dj.master_level);
         }
         for event in events {
             match event {
@@ -2894,6 +2952,44 @@ impl DAWApp {
                     } else {
                         self.finish_recording();
                         self.status_message = Some("Remote: recording stopped".into());
+                    }
+                }
+                RemoteEvent::DjParam { ch, param, v } => {
+                    if let Some(i) = self.project.track_on_channel(ch as usize) {
+                        self.dj_set_remote(crate::dj::DjTarget::Track(i, param), v);
+                    }
+                }
+                RemoteEvent::Crossfader(v) => {
+                    self.dj_set_remote(crate::dj::DjTarget::Crossfader, v);
+                }
+                RemoteEvent::DjSide { ch, side } => {
+                    if let Some(i) = self.project.track_on_channel(ch as usize) {
+                        self.project.tracks[i].dj.side = side;
+                    }
+                }
+                RemoteEvent::DjLoad { ch, track } => {
+                    if (ch as usize) < crate::model::DJ_CHANNELS
+                        && track.map(|t| t < self.project.tracks.len()).unwrap_or(true)
+                    {
+                        self.project.assign_channel(ch as usize, track);
+                    }
+                }
+                RemoteEvent::DjMute { ch, on } => {
+                    if let Some(i) = self.project.track_on_channel(ch as usize) {
+                        self.project.tracks[i].muted = on;
+                    }
+                }
+                RemoteEvent::DjWrite(on) => self.dj.write = on,
+                RemoteEvent::Play(on) => {
+                    if on != self.playing {
+                        self.toggle_playback();
+                    }
+                }
+                RemoteEvent::MixRecord(on) => {
+                    if on {
+                        self.start_mix_recording();
+                    } else {
+                        self.stop_mix_recording();
                     }
                 }
                 RemoteEvent::DevicesChanged => {}

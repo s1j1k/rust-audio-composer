@@ -132,3 +132,112 @@ button:active { background: #343a45; }
   background: var(--accent); opacity: 0.0; transition: opacity 0.25s;
 }
 #flash.on { opacity: 0.55; }
+
+/* ---------- DJ page ---------- */
+@font-face { font-family: 'Phosphor'; src: url('/phosphor.ttf') format('truetype'); font-display: block; }
+.ph { font-family: 'Phosphor', sans-serif; font-style: normal; }
+
+#dj { display: none; }
+body.dj-mode #stage { display: none; }
+body.dj-mode #dj {
+  flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 6px;
+  padding: 6px max(8px, env(safe-area-inset-right)) max(6px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
+  background: #18191e;
+}
+body.dj-mode .keys-only { display: none !important; }
+.dj-only { display: none !important; }
+body.dj-mode .dj-only { display: flex !important; }
+.mode { font-weight: 700; letter-spacing: 1px; background: #3a2a52; border-color: #6b4fa0; }
+.master { align-items: center; gap: 6px; flex: 1; max-width: 220px; }
+.hvu { flex: 1; height: 8px; background: #0c0c0e; border-radius: 2px; overflow: hidden; }
+#master-vu-fill { height: 100%; width: 0; background: linear-gradient(to right, #46dc6e 0 70%, #fac832 70% 90%, #ff3c32 90%); }
+
+#dj-channels {
+  flex: 1; min-height: 0; display: grid; gap: 6px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+@media (max-width: 520px) { #dj-channels { grid-template-columns: repeat(2, minmax(0, 1fr)); overflow-y: auto; touch-action: pan-y; } }
+
+.ch {
+  overflow: hidden;
+  display: flex; flex-direction: column; gap: 4px; min-height: 0;
+  background: #212228; border: 1px solid #34363e; border-top: 3px solid var(--track, #5a5c66);
+  border-radius: 8px; padding: 5px;
+}
+.ch-head { display: flex; align-items: center; gap: 4px; }
+.ch-icon { font-size: 18px; width: 20px; text-align: center; flex: none; }
+.ch-track { flex: 1; min-width: 0; height: 28px; padding: 0 4px; font-size: 12px; }
+.ch-body { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 4px; }
+.ch.empty .ch-body { display: none; }
+.ch-empty { display: none; color: var(--muted); text-align: center; margin: auto; font-size: 12px; }
+.ch.empty .ch-empty { display: block; }
+
+.knobs { display: flex; justify-content: space-around; align-items: flex-end; }
+.knob { position: relative; display: flex; flex-direction: column; align-items: center; --d: 40px; touch-action: none; }
+.knob.lg { --d: 54px; }
+.knob .ring { width: var(--d); height: var(--d); border-radius: 50%; transform: none;
+  background: conic-gradient(from -135deg, #121216 0deg 270deg, transparent 270deg); }
+.knob .cap {
+  position: absolute; top: 5px; left: 50%; margin-left: calc(var(--d) / -2 + 5px);
+  width: calc(var(--d) - 10px); height: calc(var(--d) - 10px); border-radius: 50%;
+  background: radial-gradient(circle at 40% 35%, #5a5c66, #3a3b43 70%);
+  box-shadow: 0 2px 3px #000, inset 0 0 0 1px #62646e;
+}
+.knob .ptr { position: absolute; left: 50%; top: 3px; width: 3px; margin-left: -1.5px; height: 40%; background: #f0f0f5; border-radius: 2px; }
+.knob span { font-size: 10px; color: var(--muted); margin-top: 2px; letter-spacing: 0.5px; }
+.knob.active span { color: #fff; }
+.knob.auto::after, .fader.auto::after, .xf.auto::after {
+  content: ''; position: absolute; top: 0; right: 0; width: 7px; height: 7px; border-radius: 50%; background: #ffaa3c;
+}
+
+.fader-row { flex: 1; min-height: 90px; display: flex; justify-content: center; gap: 6px; }
+.fader { position: relative; width: 44px; touch-action: none; }
+.fader .slot { position: absolute; left: 50%; top: 10px; bottom: 10px; width: 5px; margin-left: -2.5px; background: #0a0a0c; border-radius: 3px; }
+.fader .fcap {
+  position: absolute; left: 4px; right: 4px; height: 24px; bottom: 4px; border-radius: 3px;
+  background: repeating-linear-gradient(to bottom, #50525c 0 2px, #3c3d45 2px 4px);
+  border-top: 2px solid #f0f0f5; box-shadow: 0 2px 3px #000;
+}
+.fader.active .fcap { background: repeating-linear-gradient(to bottom, #62646e 0 2px, #4a4b54 2px 4px); }
+.vu { position: relative; width: 10px; background: #0c0c0e; border-radius: 2px; overflow: hidden; }
+.vu-fill { position: absolute; left: 0; right: 0; bottom: 0; height: 0;
+  background: linear-gradient(to top, #46dc6e 0 70%, #fac832 70% 90%, #ff3c32 90%); background-size: 100% var(--vu-h, 100%); }
+
+.sides { display: flex; gap: 2px; }
+.sides button { flex: 1; height: 26px; padding: 0; font-size: 11px; font-weight: 700; color: var(--muted); }
+.sides button.on { background: #f0f0f5; color: #111; }
+.mute { height: 26px; font-size: 11px; font-weight: 700; }
+.mute.on { background: #f0be3c; color: #111; border-color: #f0be3c; }
+
+#dj-bottom { flex: none; display: flex; align-items: center; gap: 8px; }
+.dj-btn { height: 40px; font-weight: 700; letter-spacing: 0.5px; flex: none; }
+#dj-play.on { background: #286e46; border-color: #3fa66a; }
+#dj-write.on { background: #a82828; border-color: #ff6b6b; }
+.rec-mix { background: #6e2428; border-color: #a83a40; }
+.rec-mix.on { background: #c62828; border-color: #ff6b6b; animation: recpulse 1s ease-in-out infinite; }
+
+.xf { position: relative; flex: 1; height: 44px; touch-action: none; }
+.xf .slot { position: absolute; left: 24px; right: 24px; top: 50%; height: 5px; margin-top: -2.5px; background: #0a0a0c; border-radius: 3px; }
+.xf .xcap {
+  position: absolute; top: 4px; width: 28px; height: 36px; left: 50%; border-radius: 3px;
+  background: repeating-linear-gradient(to right, #50525c 0 2px, #3c3d45 2px 4px);
+  border-left: 2px solid #f0f0f5; box-shadow: 0 2px 3px #000;
+}
+.xf-a, .xf-b { position: absolute; top: 50%; transform: translateY(-50%); color: var(--muted); font-weight: 700; }
+.xf-a { left: 4px; } .xf-b { right: 4px; }
+
+/* Landscape phones (~390 px tall): smaller knobs and fader so a strip fits above the bar. */
+@media (max-height: 460px) {
+  .knob { --d: 30px; }
+  .knob.lg { --d: 40px; }
+  .knob span { font-size: 9px; margin-top: 1px; }
+  .ch { gap: 2px; padding: 4px; }
+  .ch-body { gap: 2px; }
+  .ch-head select { height: 24px; }
+  .fader-row { min-height: 52px; }
+  .fader .fcap { height: 18px; }
+  .sides button, .mute { height: 22px; }
+  .dj-btn { height: 34px; padding: 0 8px; }
+  .xf { height: 36px; }
+  .xf .xcap { height: 28px; }
+}

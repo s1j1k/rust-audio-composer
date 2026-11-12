@@ -232,8 +232,8 @@ pub fn show_track_panel(app: &mut DAWApp, ui: &mut Ui) {
     ui.separator();
     ui.heading("Master");
     ui.add(egui::Slider::new(&mut app.audio.master_volume, 0.0..=1.0).text("Volume"));
-    if ui.button("Open DJ Tools").clicked() {
-        app.show_dj_panel = true;
+    if ui.button("Open DJ mode").clicked() {
+        app.open_dj_mode();
     }
 }
 

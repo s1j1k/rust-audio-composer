@@ -93,6 +93,12 @@ These are documented for planned expansion. Verify license before integration:
 | [VCSL](https://github.com/sgossner/VCSL) | CC0 | More instruments (Steinway B grand, marimba, vibraphone; large files) |
 | [Sonatina Symphonic Orchestra](https://sso.mattiaswestlund.net/) | CC BY 4.0 | Requires attribution in commercial apps |
 
+## Icons
+
+Track icons and some interface symbols are from **[Phosphor Icons](https://phosphoricons.com)** by Helena Zhang and Tobias Fried, released under the **MIT licence**. The font is bundled through the [`egui-phosphor`](https://github.com/amPerl/egui-phosphor) crate (MIT OR Apache-2.0). The same font file is served to the phone remote from the desktop app.
+
+The drum icon is drawn in code by this project (`src/ui/drum_icons.rs`), because Phosphor has no drum.
+
 ## Contact
 
 FreePats contributions: freepats@zenvoid.org  

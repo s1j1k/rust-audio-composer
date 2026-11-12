@@ -34,8 +34,11 @@ pub fn show_piano_roll_detail(app: &mut DAWApp, ui: &mut Ui) {
         Editor,
         Sequencer,
         Keyboard,
+        Dj,
     }
-    let current = if app.bottom_keyboard {
+    let current = if app.dj_docked() {
+        View::Dj
+    } else if app.bottom_keyboard {
         View::Keyboard
     } else if is_drum && app.drum_view_sequencer && !app.sequencer_popped_out {
         View::Sequencer
@@ -62,7 +65,14 @@ pub fn show_piano_roll_detail(app: &mut DAWApp, ui: &mut Ui) {
             ui.selectable_value(&mut view, View::Editor, "Piano roll");
         }
         ui.selectable_value(&mut view, View::Keyboard, "Virtual piano");
-        if view != current {
+        ui.selectable_value(&mut view, View::Dj, format!("{} DJ", egui_phosphor::regular::VINYL_RECORD))
+            .on_hover_text("DJ mode: 4-channel mixer, crossfader, platters, effects over time");
+        if view != current && view == View::Dj {
+            app.open_dj_mode();
+        } else if view != current {
+            if current == View::Dj {
+                app.close_dj_mode();
+            }
             app.bottom_keyboard = view == View::Keyboard;
             if view == View::Keyboard {
                 app.show_piano = false; // docking it here replaces the pop-out
@@ -90,7 +100,18 @@ pub fn show_piano_roll_detail(app: &mut DAWApp, ui: &mut Ui) {
                     app.sequencer_popped_out = true;
                 }
             }
+            View::Dj => {
+                if ui.small_button("Pop out").on_hover_text("Open DJ mode in its own window").clicked() {
+                    app.pop_out_dj_mode();
+                }
+            }
             View::Editor => {}
+        }
+        if app.show_dj_panel
+            && app.dj.popped_out
+            && ui.small_button("Dock DJ").on_hover_text("Bring DJ mode back into this panel").clicked()
+        {
+            app.open_dj_mode();
         }
         if app.show_piano
             && ui.small_button("Dock piano").on_hover_text("Bring the virtual piano back into this panel").clicked()
@@ -118,6 +139,15 @@ pub fn show_piano_roll_detail(app: &mut DAWApp, ui: &mut Ui) {
             .auto_shrink([false, false])
             .max_height(ui.available_height().max(120.0))
             .show(ui, |ui| crate::ui::show_piano_body(app, ui, true));
+        return;
+    }
+
+    if current == View::Dj {
+        egui::ScrollArea::vertical()
+            .id_salt("docked_dj")
+            .auto_shrink([false, false])
+            .max_height(ui.available_height().max(120.0))
+            .show(ui, |ui| crate::ui::show_dj_mode(app, ui));
         return;
     }
 

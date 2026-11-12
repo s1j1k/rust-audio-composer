@@ -2,6 +2,7 @@ mod ai;
 mod app;
 mod audio;
 mod history;
+mod dj;
 mod model;
 mod music;
 mod remote;

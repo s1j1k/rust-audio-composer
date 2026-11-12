@@ -3,6 +3,9 @@ use super::note::Note;
 use super::note_clip::NoteClip;
 use super::effects::TrackEffects;
 use super::loop_region::LoopRegion;
+use super::automation::{AutomationLane, FxParam, TrackLane};
+use super::dj::TrackDj;
+use super::track_icon::TrackIcon;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -34,6 +37,18 @@ pub struct Track {
     pub effects: TrackEffects,
     #[serde(default)]
     pub loop_region: LoopRegion,
+    /// Effects over time (one lane per automated parameter).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub automation: Vec<TrackLane>,
+    /// Which automation lane is open under the track on the timeline (None = closed).
+    #[serde(default)]
+    pub lane_view: Option<FxParam>,
+    /// DJ mixer channel and crossfader side.
+    #[serde(default)]
+    pub dj: TrackDj,
+    /// Picked icon; `None` = derive one from the instrument.
+    #[serde(default)]
+    pub icon: Option<TrackIcon>,
 }
 
 impl Track {
@@ -57,6 +72,10 @@ impl Track {
             color: colors[index % colors.len()],
             effects: TrackEffects::default(),
             loop_region: LoopRegion::default(),
+            automation: Vec::new(),
+            lane_view: None,
+            dj: TrackDj::default(),
+            icon: None,
         }
     }
 
@@ -67,6 +86,69 @@ impl Track {
         track.kind = TrackKind::Drum;
         track.color = [255, 100, 80];
         track
+    }
+
+    pub fn icon(&self) -> TrackIcon {
+        self.icon.unwrap_or_else(|| TrackIcon::default_for(&self.instrument))
+    }
+
+    /// The automation lane for `param`, if it has any points.
+    pub fn lane(&self, param: FxParam) -> Option<&AutomationLane> {
+        self.automation
+            .iter()
+            .find(|l| l.param == param)
+            .map(|l| &l.lane)
+            .filter(|l| !l.is_empty())
+    }
+
+    /// The automation lane for `param`, created empty if missing.
+    pub fn lane_mut(&mut self, param: FxParam) -> &mut AutomationLane {
+        if let Some(i) = self.automation.iter().position(|l| l.param == param) {
+            return &mut self.automation[i].lane;
+        }
+        self.automation.push(TrackLane {
+            param,
+            lane: AutomationLane::default(),
+        });
+        &mut self.automation.last_mut().expect("just pushed").lane
+    }
+
+    pub fn clear_lane(&mut self, param: FxParam) {
+        self.automation.retain(|l| l.param != param);
+    }
+
+    pub fn has_automation(&self) -> bool {
+        self.automation.iter().any(|l| !l.lane.is_empty())
+    }
+
+    /// Fixed (un-automated) value of a parameter.
+    pub fn static_value(&self, param: FxParam) -> f32 {
+        param.get(&self.effects, self.volume)
+    }
+
+    pub fn set_static_value(&mut self, param: FxParam, v: f32) {
+        param.set(&mut self.effects, &mut self.volume, v);
+    }
+
+    /// Value of a parameter at `beat`: the automation if the lane has points, else the
+    /// fixed value.
+    pub fn value_at(&self, param: FxParam, beat: f64) -> f32 {
+        self.lane(param)
+            .and_then(|l| l.value_at(beat))
+            .map(|v| param.clamp(v))
+            .unwrap_or_else(|| self.static_value(param))
+    }
+
+    /// Effects and fader level at `beat`, with automation applied.
+    pub fn mix_at(&self, beat: f64) -> (TrackEffects, f32) {
+        let mut fx = self.effects;
+        let mut volume = self.volume;
+        for l in &self.automation {
+            if let Some(v) = l.lane.value_at(beat) {
+                l.param.set(&mut fx, &mut volume, v);
+            }
+        }
+        (fx, volume)
     }
 
     pub fn is_drum(&self) -> bool {

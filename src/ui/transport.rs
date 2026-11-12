@@ -125,10 +125,11 @@ pub fn show_transport(app: &mut DAWApp, ui: &mut Ui) {
         }
 
         if ui
-            .selectable_label(app.show_dj_panel, "DJ")
+            .selectable_label(app.show_dj_panel, format!("{} DJ", egui_phosphor::regular::VINYL_RECORD))
+            .on_hover_text("DJ mode: mix tracks with knobs, faders, a crossfader and platters")
             .clicked()
         {
-            app.show_dj_panel = !app.show_dj_panel;
+            app.toggle_dj_mode();
         }
 
         ui.separator();
