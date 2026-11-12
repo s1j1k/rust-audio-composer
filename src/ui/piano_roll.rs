@@ -188,13 +188,21 @@ fn handle_pitch_scroll(app: &mut DAWApp, ui: &Ui, hovered: bool) {
     if ctrl {
         return;
     }
-    let scroll = ui.input(|i| i.smooth_scroll_delta.y + i.raw_scroll_delta.y);
+    // smooth_scroll_delta spreads one wheel notch over several frames in small steps, so
+    // accumulate it instead of rounding each frame (which dropped most small steps).
+    // (raw_scroll_delta is the same motion unsmoothed; adding both double-counted.)
+    let scroll = ui.input(|i| i.smooth_scroll_delta.y);
     if scroll.abs() < 0.01 {
         return;
     }
-    // Scroll up → higher pitches; scroll down → lower pitches.
-    let semitones = -(scroll / 15.0).round() as i32;
-    app.adjust_piano_roll_pitch(semitones);
+    const PX_PER_SEMITONE: f32 = 15.0;
+    app.piano_roll_scroll_accum += scroll;
+    let steps = (app.piano_roll_scroll_accum / PX_PER_SEMITONE).trunc();
+    if steps != 0.0 {
+        app.piano_roll_scroll_accum -= steps * PX_PER_SEMITONE;
+        // Scroll up → higher pitches; scroll down → lower pitches.
+        app.adjust_piano_roll_pitch(steps as i32);
+    }
 }
 
 fn show_melodic_roll(app: &mut DAWApp, ui: &mut Ui) {
@@ -393,6 +401,17 @@ fn draw_melodic_key_labels(app: &mut DAWApp, ui: &mut Ui, height: f32, roll_low:
     let painter = ui.painter_at(rect);
     let rows = visible_pitch_rows(height);
 
+    // Drawn like a real keyboard turned on its side (low notes at the bottom, the player's
+    // edge facing the grid): white keys run the full width, black keys are shorter and sit
+    // at the back (left). One row per semitone keeps every key lined up with its grid row.
+    let black_w = (KEY_LABEL_WIDTH * 0.6).round();
+    let white_fill = Color32::from_rgb(236, 236, 242);
+    let black_fill = Color32::from_rgb(22, 22, 28);
+    let local_fill = Color32::from_rgb(140, 170, 255);
+    let remote_fill = Color32::from_rgb(110, 220, 140);
+    let edge = Color32::from_gray(150);
+    painter.rect_filled(rect, 0.0, white_fill);
+
     for row in 0..rows {
         let pitch = roll_high.saturating_sub(row);
         if pitch < roll_low {
@@ -408,30 +427,61 @@ fn draw_melodic_key_labels(app: &mut DAWApp, ui: &mut Ui, height: f32, roll_low:
         let is_black = is_black_key(pitch);
         let pressed = app.held_notes.contains(&pitch);
         let remote = app.remote_held.contains_key(&pitch);
-        let fill = if pressed {
-            Color32::from_rgb(140, 170, 255)
+        let lit = if pressed {
+            Some(local_fill)
         } else if remote {
-            Color32::from_rgb(110, 220, 140)
-        } else if is_black {
-            Color32::from_rgb(28, 28, 34)
+            Some(remote_fill)
         } else {
-            Color32::from_rgb(228, 228, 235)
+            None
         };
 
-        painter.rect_filled(key_rect, 1.0, fill);
-        painter.rect_stroke(key_rect, 1.0, egui::Stroke::new(0.5_f32, Color32::from_gray(120)));
-
-        let label = pitch_to_name(pitch);
-        let text_color = if is_black {
-            Color32::from_rgb(240, 240, 250)
+        if is_black {
+            // The white keys either side show through to the right of the black key;
+            // their boundary is a line through the middle of the black key's row.
+            painter.line_segment(
+                [
+                    egui::pos2(rect.min.x + black_w, key_rect.center().y),
+                    egui::pos2(rect.max.x, key_rect.center().y),
+                ],
+                egui::Stroke::new(1.0_f32, edge),
+            );
+            let black_rect = Rect::from_min_size(key_rect.min, Vec2::new(black_w, PIANO_ROW_HEIGHT))
+                .shrink2(Vec2::new(0.0, 1.0));
+            painter.rect_filled(black_rect, 2.0, lit.unwrap_or(black_fill));
         } else {
-            Color32::from_rgb(35, 35, 45)
+            if let Some(color) = lit {
+                painter.rect_filled(key_rect, 0.0, color);
+            }
+            // E–F and B–C have no black key between them: a full-width boundary.
+            let pc = pitch % 12;
+            if pc == 0 || pc == 5 {
+                painter.line_segment(
+                    [egui::pos2(rect.min.x, key_rect.max.y), egui::pos2(rect.max.x, key_rect.max.y)],
+                    egui::Stroke::new(1.0_f32, edge),
+                );
+            }
+        }
+
+        // Every key is named (handy while learning). C is bold so octaves stand out.
+        let is_c = pitch % 12 == 0;
+        let (label_pos, align, text_color) = if is_black {
+            (
+                key_rect.left_center() + Vec2::new(3.0, 0.0),
+                egui::Align2::LEFT_CENTER,
+                if lit.is_some() { Color32::from_rgb(20, 20, 30) } else { Color32::from_gray(200) },
+            )
+        } else {
+            (
+                key_rect.right_center() - Vec2::new(3.0, 0.0),
+                egui::Align2::RIGHT_CENTER,
+                if is_c { Color32::from_rgb(20, 20, 30) } else { Color32::from_rgb(90, 90, 105) },
+            )
         };
         painter.text(
-            key_rect.left_center() + Vec2::new(3.0, 0.0),
-            egui::Align2::LEFT_CENTER,
-            label,
-            theme::font(theme::FONT_SM),
+            label_pos,
+            align,
+            pitch_to_name(pitch),
+            theme::mono(if is_c { theme::FONT_MD } else { theme::FONT_XS }),
             text_color,
         );
 

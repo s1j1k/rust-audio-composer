@@ -93,15 +93,20 @@ pub fn apply(ctx: &egui::Context, ui_font: UiFontFamily) {
 
     ctx.set_fonts(fonts);
 
-    let mut style = (*ctx.style()).clone();
+    // One dark theme everywhere. egui follows the OS light/dark setting by default, but
+    // the timeline, piano roll and sequencer paint their own dark colours, so a light
+    // OS theme left half the app light and half dark. A light theme can come later.
+    ctx.set_theme(egui::Theme::Dark);
+
+    let mut style = (*ctx.style_of(egui::Theme::Dark)).clone();
     style.text_styles = text_styles();
     style.spacing.item_spacing = egui::vec2(6.0, 4.0);
     style.spacing.button_padding = egui::vec2(6.0, 3.0);
     style.spacing.window_margin = egui::Margin::same(8.0);
     style.spacing.indent = 14.0;
-    style.visuals = compact_visuals(style.visuals);
+    style.visuals = studio_visuals(compact_visuals(style.visuals));
 
-    ctx.set_style(style);
+    ctx.set_style_of(egui::Theme::Dark, style);
 }
 
 fn text_styles() -> BTreeMap<TextStyle, FontId> {
@@ -112,6 +117,28 @@ fn text_styles() -> BTreeMap<TextStyle, FontId> {
         (TextStyle::Heading, FontId::new(14.5, FontFamily::Proportional)),
         (TextStyle::Monospace, FontId::new(11.0, FontFamily::Monospace)),
     ])
+}
+
+/// Dark visuals tinted to match the hand-painted editors (track rows are ~rgb(32,32,38)),
+/// so panels, windows and editors read as one surface instead of grey vs blue-grey.
+fn studio_visuals(mut visuals: Visuals) -> Visuals {
+    use egui::Color32;
+    visuals.panel_fill = Color32::from_rgb(28, 28, 34);
+    visuals.window_fill = Color32::from_rgb(33, 33, 40);
+    visuals.extreme_bg_color = Color32::from_rgb(20, 20, 25);
+    visuals.faint_bg_color = Color32::from_rgb(36, 36, 43);
+    visuals.code_bg_color = Color32::from_rgb(38, 38, 46);
+    visuals.window_stroke.color = Color32::from_rgb(58, 58, 68);
+    visuals.widgets.noninteractive.bg_fill = Color32::from_rgb(33, 33, 40);
+    visuals.widgets.noninteractive.weak_bg_fill = Color32::from_rgb(33, 33, 40);
+    visuals.widgets.noninteractive.bg_stroke.color = Color32::from_rgb(52, 52, 62);
+    visuals.widgets.inactive.bg_fill = Color32::from_rgb(52, 52, 62);
+    visuals.widgets.inactive.weak_bg_fill = Color32::from_rgb(46, 46, 56);
+    visuals.widgets.hovered.bg_fill = Color32::from_rgb(64, 64, 76);
+    visuals.widgets.hovered.weak_bg_fill = Color32::from_rgb(60, 60, 72);
+    visuals.widgets.active.bg_fill = Color32::from_rgb(74, 74, 88);
+    visuals.widgets.active.weak_bg_fill = Color32::from_rgb(70, 70, 84);
+    visuals
 }
 
 fn compact_visuals(mut visuals: Visuals) -> Visuals {

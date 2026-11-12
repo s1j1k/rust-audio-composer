@@ -8,8 +8,8 @@ use crate::model::instrument::{
     CustomInstrument, DrumKit, Genre, GenrePreset, InstrumentId, InstrumentProfile, SampleKind,
 };
 use crate::model::{Note, NoteClip, Project, SavedDrumPattern, SavedProject};
-use crate::music::Key;
-use crate::music::theory::NOTE_NAMES;
+use crate::music::{resolve_chord, Key};
+
 use crate::ui::theme::UiFontFamily;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::Stream;
@@ -51,6 +51,19 @@ pub struct ClipDragState {
     pub orig_trim_end: f64,
     pub orig_loop_end: f64,
 }
+
+/// Copied clips. Serialized to the system clipboard as JSON so Ctrl+V works (egui only
+/// reports a paste when the OS clipboard has text) and clips can move between windows.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct ClipClipboard {
+    /// Marks the JSON as ours, so pasting ordinary text does nothing.
+    pub format: String,
+    /// Copied from a drum track (drum hits only paste onto drum tracks, and vice versa).
+    pub drum: bool,
+    pub clips: Vec<NoteClip>,
+}
+
+const CLIP_CLIPBOARD_FORMAT: &str = "rust-audio-composer/clips@1";
 
 #[derive(Clone, Copy, Debug)]
 pub struct HeldNoteState {
@@ -101,6 +114,10 @@ pub struct DAWApp {
     pub playback_start: Instant,
 
     pub detected_key: Option<Key>,
+    /// Key chosen by hand in the Composition Assistant (None = use the detected key).
+    pub composition_key: Option<Key>,
+    /// Genre whose tips are shown in the Composition Assistant.
+    pub composition_genre: Option<crate::model::instrument::Genre>,
     pub composition_hint: Option<String>,
 
     pub instrument_name_input: String,
@@ -117,10 +134,17 @@ pub struct DAWApp {
 
     pub selected_note: Option<(usize, usize)>,
     pub selected_clip: Option<usize>,
+    /// Extra clips (by id, on the current track) added with Ctrl/Shift+click, for merge,
+    /// copy and duplicate. `selected_clip` is always part of the selection too.
+    pub selected_clip_ids: HashSet<u64>,
+    /// Last copied clips, also put on the system clipboard as JSON (see `ClipClipboard`).
+    pub clip_clipboard: Option<ClipClipboard>,
     pub note_drag: Option<NoteDragState>,
     pub clip_drag: Option<ClipDragState>,
     pub next_clip_id: u64,
     pub recording_clip: Option<(usize, usize)>,
+    /// Track waiting for the user to confirm deletion (it has clips, and there's no undo).
+    pub pending_track_delete: Option<usize>,
     /// When the current take started (for the REC timer) and whether it is overdubbing
     /// into a bubble that already existed.
     pub recording_since: Option<Instant>,
@@ -143,8 +167,11 @@ pub struct DAWApp {
     pub section_clip_index: Option<usize>,
     pub piano_roll_grid_rect: Option<egui::Rect>,
     pub timeline_grid_origin_x: Option<f32>,
-    pub piano_roll_octave_base: u8,
-    pub piano_roll_octave_count: u8,
+    /// Highest pitch shown in the melodic piano roll; the roll shows
+    /// `visible_pitch_count()` rows downward from here.
+    pub piano_roll_top: u8,
+    /// Leftover scroll (pixels) that hasn't added up to a whole semitone yet.
+    pub piano_roll_scroll_accum: f32,
     pub piano_keyboard_octaves: u8,
     pub piano_keyboard_base: u8,
     pub keyboard_mapping_minimized: bool,
@@ -220,6 +247,8 @@ impl Default for DAWApp {
             playback_start: Instant::now(),
 
             detected_key: None,
+            composition_key: None,
+            composition_genre: None,
             composition_hint: None,
 
             instrument_name_input: String::new(),
@@ -238,9 +267,12 @@ impl Default for DAWApp {
 
             selected_note: None,
             selected_clip: None,
+            selected_clip_ids: HashSet::new(),
+            clip_clipboard: None,
             note_drag: None,
             clip_drag: None,
             next_clip_id: 1,
+            pending_track_delete: None,
             recording_clip: None,
             recording_since: None,
             recording_overdub: false,
@@ -256,8 +288,8 @@ impl Default for DAWApp {
             section_clip_index: None,
             piano_roll_grid_rect: None,
             timeline_grid_origin_x: None,
-            piano_roll_octave_base: 48,
-            piano_roll_octave_count: 3,
+            piano_roll_top: 72, // C5: the view starts around middle C
+            piano_roll_scroll_accum: 0.0,
             piano_keyboard_octaves: 2,
             piano_keyboard_base: 48,
             // Keys show their computer-key letters, so the big map starts hidden.
@@ -357,23 +389,26 @@ impl DAWApp {
         self.project.migrate_all_tracks(&mut self.next_clip_id);
     }
 
+    /// Lowest pitch visible in the melodic piano roll.
     pub fn piano_roll_low(&self) -> u8 {
-        self.piano_roll_octave_base
+        let rows = crate::ui::piano_roll_visible_pitch_count() as i32;
+        (self.piano_roll_high() as i32 - rows + 1).max(0) as u8
     }
 
+    /// Highest pitch visible in the melodic piano roll.
     pub fn piano_roll_high(&self) -> u8 {
-        (self.piano_roll_octave_base as u16 + self.piano_roll_octave_count as u16 * 12 + 11)
-            .min(127) as u8
+        self.piano_roll_top.min(127)
     }
 
+    /// Scroll the piano roll view by `semitones` (negative = down toward the bass).
+    /// The view can reach the whole MIDI range, 0 (C-1) to 127 (G9).
     pub fn adjust_piano_roll_pitch(&mut self, semitones: i32) {
         if semitones == 0 {
             return;
         }
-        let span = self.piano_roll_octave_count as i32 * 12 + 11;
-        let max_base = (127 - span).max(0);
-        self.piano_roll_octave_base = (self.piano_roll_octave_base as i32 + semitones)
-            .clamp(0, max_base) as u8;
+        let rows = crate::ui::piano_roll_visible_pitch_count() as i32;
+        let min_top = (rows - 1).clamp(0, 127);
+        self.piano_roll_top = (self.piano_roll_top as i32 + semitones).clamp(min_top, 127) as u8;
     }
 
     pub fn piano_keyboard_end(&self) -> u8 {
@@ -445,6 +480,231 @@ impl DAWApp {
         self.project.tracks.get(track_idx)?.clips.iter().position(|c| {
             beat >= c.start_beat - 0.001 && beat < c.start_beat + c.visible_length()
         })
+    }
+
+    // ---- Clip selection, copy / paste / duplicate / merge -------------------------
+
+    /// Indices (on the current track) of every selected clip, in timeline order.
+    pub fn selected_clip_indices(&self) -> Vec<usize> {
+        let Some(track) = self.project.tracks.get(self.current_track) else {
+            return Vec::new();
+        };
+        track
+            .clips
+            .iter()
+            .enumerate()
+            .filter(|(i, c)| self.selected_clip == Some(*i) || self.selected_clip_ids.contains(&c.id))
+            .map(|(i, _)| i)
+            .collect()
+    }
+
+    /// Plain click on a bubble: select just that clip.
+    pub fn select_single_clip(&mut self, track_idx: usize, clip_idx: usize) {
+        self.select_track(track_idx);
+        self.selected_clip_ids.clear();
+        self.selected_clip = Some(clip_idx);
+    }
+
+    /// Ctrl/Shift+click on a bubble: add it to (or remove it from) the selection.
+    /// Clicking a bubble on another track starts a new selection there.
+    pub fn toggle_clip_selected(&mut self, track_idx: usize, clip_idx: usize) {
+        if track_idx != self.current_track {
+            self.select_single_clip(track_idx, clip_idx);
+            return;
+        }
+        let ids: Vec<u64> = self.project.tracks[track_idx].clips.iter().map(|c| c.id).collect();
+        let Some(&id) = ids.get(clip_idx) else { return };
+        // Fold the primary selection into the set so the set holds everything.
+        if let Some(primary) = self.selected_clip.and_then(|i| ids.get(i)) {
+            self.selected_clip_ids.insert(*primary);
+        }
+        if !self.selected_clip_ids.remove(&id) {
+            self.selected_clip_ids.insert(id);
+        }
+        self.selected_clip = ids.iter().position(|i| self.selected_clip_ids.contains(i));
+    }
+
+    /// Select every clip on the current track.
+    pub fn select_all_clips(&mut self) {
+        if let Some(track) = self.project.tracks.get(self.current_track) {
+            self.selected_clip_ids = track.clips.iter().map(|c| c.id).collect();
+            self.selected_clip = if track.clips.is_empty() { None } else { Some(0) };
+        }
+    }
+
+    fn clip_ops_blocked(&mut self) -> bool {
+        if self.recording || self.count_in_target.is_some() {
+            self.status_error = Some("Stop recording first.".to_string());
+            return true;
+        }
+        false
+    }
+
+    fn selection_payload(&self) -> Option<ClipClipboard> {
+        let idxs = self.selected_clip_indices();
+        let track = self.project.tracks.get(self.current_track)?;
+        if idxs.is_empty() {
+            return None;
+        }
+        Some(ClipClipboard {
+            format: CLIP_CLIPBOARD_FORMAT.to_string(),
+            drum: track.is_drum(),
+            clips: idxs.iter().map(|&i| track.clips[i].clone()).collect(),
+        })
+    }
+
+    /// Copy the selected clips. Returns the JSON for the system clipboard.
+    pub fn copy_selected_clips(&mut self) -> Option<String> {
+        let payload = self.selection_payload()?;
+        let n = payload.clips.len();
+        let json = serde_json::to_string(&payload).ok();
+        self.clip_clipboard = Some(payload);
+        self.status_error = None;
+        self.status_message = Some(format!(
+            "Copied {n} clip{} (Ctrl+V pastes at the playhead)",
+            if n == 1 { "" } else { "s" }
+        ));
+        json
+    }
+
+    /// Paste text from the system clipboard, if it holds clips copied from this app.
+    pub fn paste_clipboard_text(&mut self, text: &str) -> bool {
+        match serde_json::from_str::<ClipClipboard>(text) {
+            Ok(payload) if payload.format == CLIP_CLIPBOARD_FORMAT => {
+                self.clip_clipboard = Some(payload);
+                self.paste_clips_at_playhead();
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Paste the copied clips onto the selected track, starting at the playhead.
+    pub fn paste_clips_at_playhead(&mut self) {
+        let beat = self.project.playhead_beat;
+        if let Some(payload) = self.clip_clipboard.clone() {
+            self.paste_clips_at(&payload, beat);
+        }
+    }
+
+    /// Paste `payload` so its earliest clip starts at `at_beat`, keeping the spacing
+    /// between clips. The pasted clips become the selection.
+    fn paste_clips_at(&mut self, payload: &ClipClipboard, at_beat: f64) {
+        if self.clip_ops_blocked() || payload.clips.is_empty() {
+            return;
+        }
+        let track_idx = self.current_track;
+        let Some(track) = self.project.tracks.get(track_idx) else { return };
+        if track.is_drum() != payload.drum {
+            self.status_message = None;
+            self.status_error = Some(if payload.drum {
+                "Those are drum clips: select a drum track to paste them.".to_string()
+            } else {
+                "Those are melodic clips: select a melodic track to paste them.".to_string()
+            });
+            return;
+        }
+        let first = payload.clips.iter().map(|c| c.start_beat).fold(f64::MAX, f64::min);
+        let delta = at_beat.max(0.0) - first;
+        let mut new_ids = HashSet::new();
+        let mut end = 0.0_f64;
+        for clip in &payload.clips {
+            let mut c = clip.clone();
+            c.id = self.next_clip_id;
+            self.next_clip_id += 1;
+            c.start_beat = (c.start_beat + delta).max(0.0);
+            c.loop_end_beat = (c.loop_end_beat + delta).max(c.start_beat + c.visible_length());
+            end = end.max(c.timeline_end());
+            new_ids.insert(c.id);
+            self.project.tracks[track_idx].add_clip(c);
+        }
+        self.extend_project_to(end);
+        let clips = &self.project.tracks[track_idx].clips;
+        self.selected_clip = clips.iter().position(|c| new_ids.contains(&c.id));
+        self.selected_clip_ids = new_ids;
+        self.selected_note = None;
+        self.status_error = None;
+        let n = payload.clips.len();
+        self.status_message = Some(format!(
+            "Pasted {n} clip{} at bar {}",
+            if n == 1 { "" } else { "s" },
+            (at_beat / self.project.beats_per_bar().max(1.0)).floor() as i64 + 1
+        ));
+    }
+
+    /// Copy the selected clips and paste them straight after the selection (Ctrl+D).
+    pub fn duplicate_selected_clips(&mut self) {
+        let Some(payload) = self.selection_payload() else { return };
+        let start = payload.clips.iter().map(|c| c.start_beat).fold(f64::MAX, f64::min);
+        let end = payload.clips.iter().map(|c| c.timeline_end()).fold(0.0, f64::max);
+        // Land on a bar line so a duplicated phrase stays in time.
+        let bar = self.project.beats_per_bar().max(1.0);
+        let at = start + ((end - start) / bar).ceil() * bar;
+        self.paste_clips_at(&payload, at);
+    }
+
+    /// Combine the selected clips into one clip that plays exactly what they played
+    /// (loop repeats included), so the whole phrase can be looped or moved as one.
+    pub fn merge_selected_clips(&mut self) {
+        if self.clip_ops_blocked() {
+            return;
+        }
+        let idxs = self.selected_clip_indices();
+        if idxs.len() < 2 {
+            self.status_message = None;
+            self.status_error =
+                Some("Select two or more clips to merge (Ctrl+click or Shift+click them).".to_string());
+            return;
+        }
+        let track_idx = self.current_track;
+        let bar = self.project.beats_per_bar().max(1.0);
+        let clips: Vec<NoteClip> =
+            idxs.iter().map(|&i| self.project.tracks[track_idx].clips[i].clone()).collect();
+        let merged = merge_clips(self.next_clip_id, &clips, bar);
+        self.next_clip_id += 1;
+        let id = merged.id;
+        let n = clips.len();
+
+        let track = &mut self.project.tracks[track_idx];
+        for &i in idxs.iter().rev() {
+            track.remove_clip(i);
+        }
+        track.add_clip(merged);
+        self.selected_clip = track.clips.iter().position(|c| c.id == id);
+        self.selected_clip_ids.clear();
+        self.selected_note = None;
+        self.clip_drag = None;
+        self.stop_playback_notes();
+        self.status_error = None;
+        self.status_message = Some(format!(
+            "Merged {n} clips into one. Turn on \"Loop clip\" to repeat the whole phrase."
+        ));
+    }
+
+    /// Delete every selected clip on the current track.
+    pub fn delete_selected_clips(&mut self) {
+        if self.clip_ops_blocked() {
+            return;
+        }
+        let idxs = self.selected_clip_indices();
+        if let Some(track) = self.project.tracks.get_mut(self.current_track) {
+            for &i in idxs.iter().rev() {
+                track.remove_clip(i);
+            }
+        }
+        self.selected_clip = None;
+        self.selected_clip_ids.clear();
+        self.selected_note = None;
+        self.clip_drag = None;
+        self.stop_playback_notes();
+    }
+
+    /// Make sure the song is at least `end_beat` long (rounded up to a whole bar).
+    fn extend_project_to(&mut self, end_beat: f64) {
+        if end_beat > self.project.total_beats {
+            let bar = self.project.beats_per_bar().max(1.0);
+            self.project.total_beats = (end_beat / bar).ceil() * bar;
+        }
     }
 
     /// Recording target: overdub into the bubble under the playhead, or start a new one.
@@ -690,6 +950,7 @@ impl DAWApp {
         let track_idx = self.current_track;
         let beat = self.project.playhead_beat;
         let clip_idx = self.create_clip(track_idx, "Clip", beat);
+        self.selected_clip_ids.clear();
         self.selected_clip = Some(clip_idx);
         for (pitch, rel, dur, vel) in notes {
             self.add_note_to_clip_relative(track_idx, clip_idx, pitch, rel, dur, vel);
@@ -863,8 +1124,67 @@ impl DAWApp {
         }
     }
 
+    /// Delete a track straight away if it's empty, otherwise ask for confirmation first.
+    pub fn request_delete_track(&mut self, index: usize) {
+        let Some(track) = self.project.tracks.get(index) else { return };
+        if track.clips.iter().all(|c| c.notes.is_empty()) {
+            self.delete_track(index);
+        } else {
+            self.pending_track_delete = Some(index);
+        }
+    }
+
+    /// Remove a track and fix up everything that refers to tracks by index.
+    /// The last remaining track can't be deleted (the editors assume one exists).
+    pub fn delete_track(&mut self, index: usize) {
+        self.pending_track_delete = None;
+        if index >= self.project.tracks.len() {
+            return;
+        }
+        if self.project.tracks.len() <= 1 {
+            self.status_error = Some("Can't delete the only track.".to_string());
+            return;
+        }
+        // Close any take and silence playback first: held notes, the recording clip and
+        // the played-events set all hold track indices.
+        self.finish_recording();
+        self.stop_playback_notes();
+        if let Ok(mut eng) = self.audio_engine.lock() {
+            eng.stop_all();
+        }
+
+        let name = self.project.tracks.remove(index).name;
+
+        self.selected_clip = None;
+        self.selected_clip_ids.clear();
+        self.selected_note = None;
+        self.note_drag = None;
+        self.clip_drag = None;
+        self.section_note_indices = None;
+        self.section_drag_origins.clear();
+        self.section_clip_index = None;
+        match self.sequencer_draft_track {
+            Some(t) if t == index => {
+                self.sequencer_draft_track = None;
+                self.sequencer_draft.clear();
+            }
+            Some(t) if t > index => self.sequencer_draft_track = Some(t - 1),
+            _ => {}
+        }
+        if self.current_track > index || self.current_track >= self.project.tracks.len() {
+            self.current_track = self.current_track.saturating_sub(1);
+        }
+        self.sync_instrument_to_track();
+        self.sync_sequencer_visibility();
+        self.status_error = None;
+        self.status_message = Some(format!("Deleted track \"{name}\""));
+    }
+
     pub fn select_track(&mut self, index: usize) {
         if index < self.project.tracks.len() {
+            if index != self.current_track {
+                self.selected_clip_ids.clear();
+            }
             self.current_track = index;
             self.sync_instrument_to_track();
         }
@@ -920,6 +1240,29 @@ impl DAWApp {
         }
         if end {
             self.go_to_end();
+        }
+        // Clip shortcuts. egui turns Ctrl+C / Ctrl+V into Copy / Paste events (a paste
+        // only when the OS clipboard has text, which copying clips guarantees).
+        if !typing {
+            let (copy, paste, dup) = ctx.input(|i| {
+                let copy = i.events.iter().any(|e| matches!(e, egui::Event::Copy));
+                let paste = i.events.iter().find_map(|e| match e {
+                    egui::Event::Paste(text) => Some(text.clone()),
+                    _ => None,
+                });
+                (copy, paste, i.modifiers.command && i.key_pressed(egui::Key::D))
+            });
+            if copy {
+                if let Some(json) = self.copy_selected_clips() {
+                    ctx.copy_text(json);
+                }
+            }
+            if let Some(text) = paste {
+                self.paste_clipboard_text(&text);
+            }
+            if dup {
+                self.duplicate_selected_clips();
+            }
         }
         if space {
             // Space = stop the take if recording, otherwise play/pause.
@@ -1089,10 +1432,14 @@ impl DAWApp {
     }
 
     pub fn select_builtin_instrument(&mut self, kind: SampleKind) {
+        let id = InstrumentId::from_sample_kind(kind);
+        if !self.instrument_fits_current_track(&id) {
+            return;
+        }
         let name = kind.label();
         self.selected_instrument = name.to_string();
         if let Some(track) = self.project.tracks.get_mut(self.current_track) {
-            track.instrument = InstrumentId::from_sample_kind(kind);
+            track.instrument = id;
         }
         if let Ok(mut eng) = self.audio_engine.lock() {
             eng.set_profile(name);
@@ -1101,6 +1448,9 @@ impl DAWApp {
     }
 
     pub fn select_custom_instrument(&mut self, name: &str) {
+        if !self.instrument_fits_current_track(&InstrumentId::Custom(name.to_string())) {
+            return;
+        }
         self.selected_instrument = name.to_string();
         if let Some(track) = self.project.tracks.get_mut(self.current_track) {
             track.instrument = InstrumentId::Custom(name.to_string());
@@ -1209,47 +1559,73 @@ impl DAWApp {
         self.stop_playback();
     }
 
-    pub fn insert_chord_from_roman(&mut self, roman: &str, key: &Key) {
-        let root_pc = key.root;
-        let intervals: &[u8] = match roman {
-            "I" | "i" => &[0, 4, 7],
-            "ii" | "II" => &[2, 5, 9],
-            "iii" | "III" => &[4, 7, 11],
-            "IV" | "iv" => &[5, 9, 0],
-            "V" | "v" => &[7, 11, 2],
-            "vi" | "VI" => &[9, 0, 4],
-            "vii°" => &[11, 2, 5],
-            "vii" | "VII" => &[10, 2, 5],
-            _ => {
-                if let Some(pc) = NOTE_NAMES.iter().position(|&n| n == roman) {
-                    let base = 60 + pc as u8;
-                    let beat = self.project.playhead_beat;
-                    let mut batch = Vec::new();
-                    for offset in [0u8, 4, 7] {
-                        let pitch = base + offset - (base % 12) + (pc as u8);
-                        batch.push((pitch, 0.0, 2.0, 0.8));
-                        self.play_note_at_preview(pitch, 0.8);
-                    }
-                    let _ = beat;
-                    self.add_note_batch_clip(batch);
-                    return;
-                }
-                &[0, 4, 7]
-            }
-        };
+    /// Chords go on melodic tracks only; explain otherwise.
+    fn composition_target_ok(&mut self) -> bool {
+        let melodic = self
+            .project
+            .tracks
+            .get(self.current_track)
+            .map(|t| !t.is_drum())
+            .unwrap_or(false);
+        if !melodic {
+            self.status_message = None;
+            self.status_error = Some("Select a melodic track to add chords.".to_string());
+        }
+        melodic && !self.clip_ops_blocked()
+    }
 
-        let beat = self.project.playhead_beat;
+    /// Add one chord, a whole bar long, at the playhead and move the playhead to the next
+    /// bar, so clicking chords one after another builds a progression in order.
+    pub fn insert_chord_from_roman(&mut self, symbol: &str, key: &Key) {
+        let Some(chord) = resolve_chord(symbol, key) else { return };
+        if !self.composition_target_ok() {
+            return;
+        }
+        let bar = self.project.beats_per_bar().max(1.0);
+        let at = self.project.playhead_beat;
+        let voicing = chord.voicing();
+        self.add_note_batch_clip(voicing.iter().map(|&p| (p, 0.0, bar, 0.8)).collect());
+        self.name_selected_clip(chord.name());
+        self.extend_project_to(at + bar);
+        for &p in &voicing {
+            self.play_note_at_preview(p, 0.7);
+        }
+        self.set_playhead(at + bar);
+        self.status_error = None;
+        self.status_message = Some(format!("Added {} ({symbol}) in {}", chord.name(), key.name()));
+    }
+
+    /// Add a whole progression (one bar per chord) as a single clip at the playhead,
+    /// ready to loop.
+    pub fn insert_progression(&mut self, name: &str, symbols: &[String], key: &Key) {
+        let chords: Vec<_> = symbols.iter().filter_map(|s| resolve_chord(s, key)).collect();
+        if chords.is_empty() || !self.composition_target_ok() {
+            return;
+        }
+        let bar = self.project.beats_per_bar().max(1.0);
+        let at = self.project.playhead_beat;
         let mut batch = Vec::new();
-        for &interval in intervals {
-            let pc = (root_pc + interval) % 12;
-            let pitch = 60 + pc;
-            batch.push((pitch, 0.0, 2.0, 0.8));
+        for (i, chord) in chords.iter().enumerate() {
+            for p in chord.voicing() {
+                batch.push((p, i as f64 * bar, bar, 0.8));
+            }
         }
-        self.add_note_batch_clip(batch.clone());
-        for &(pitch, _, _, vel) in &batch {
-            self.play_note_at_preview(pitch, vel);
+        self.add_note_batch_clip(batch);
+        self.name_selected_clip(format!("{name} in {}", key.name()));
+        self.extend_project_to(at + chords.len() as f64 * bar);
+        self.status_error = None;
+        self.status_message = Some(format!(
+            "Added {name} ({} bars). Turn on \"Loop clip\" in Track Controls to repeat it.",
+            chords.len()
+        ));
+    }
+
+    fn name_selected_clip(&mut self, name: String) {
+        if let Some(ci) = self.selected_clip {
+            if let Some(clip) = self.project.tracks.get_mut(self.current_track).and_then(|t| t.clips.get_mut(ci)) {
+                clip.name = name;
+            }
         }
-        let _ = beat;
     }
 
     fn play_note_at_preview(&mut self, pitch: u8, velocity: f32) {
@@ -1837,6 +2213,7 @@ impl eframe::App for DAWApp {
         }
 
         self.show_piano_window(ctx);
+        crate::ui::show_delete_track_confirm(self, ctx);
 
         if self.show_remote {
             let mut show = self.show_remote;
@@ -1970,18 +2347,56 @@ impl DAWApp {
         out
     }
 
+    /// Instruments that can go on track `idx`: drum tracks take only drum kits and melodic
+    /// tracks only melodic instruments. Swapping across would reinterpret the notes (a drum
+    /// pattern becomes random pitches) and swap the step sequencer for the piano roll.
+    pub fn instrument_fits_track(&self, idx: usize, instrument: &InstrumentId) -> bool {
+        self.project
+            .tracks
+            .get(idx)
+            .map(|t| t.is_drum() == instrument.is_drum_track())
+            .unwrap_or(false)
+    }
+
+    /// Like [`Self::instrument_fits_track`] for the selected track; explains a refusal in the
+    /// status bar.
+    fn instrument_fits_current_track(&mut self, instrument: &InstrumentId) -> bool {
+        if self.instrument_fits_track(self.current_track, instrument) {
+            return true;
+        }
+        let drum = self
+            .project
+            .tracks
+            .get(self.current_track)
+            .map(|t| t.is_drum())
+            .unwrap_or(false);
+        self.status_message = None;
+        self.status_error = Some(if drum {
+            format!(
+                "Drum tracks can only use drum kits. Add a melodic track for {}.",
+                instrument.label()
+            )
+        } else {
+            format!(
+                "{} is a drum kit. Add a drum track to use it.",
+                instrument.label()
+            )
+        });
+        false
+    }
+
     /// Put an instrument on the selected track (from any picker, or a remote device).
-    pub fn set_track_instrument(&mut self, instrument: InstrumentId) {
-        let track_idx = self.current_track;
-        if let Some(track) = self.project.tracks.get_mut(track_idx) {
-            track.kind = if instrument.is_drum_track() {
-                crate::model::TrackKind::Drum
-            } else {
-                crate::model::TrackKind::Melodic
-            };
+    /// Returns false (and leaves the track alone) if the instrument is the wrong kind.
+    pub fn set_track_instrument(&mut self, instrument: InstrumentId) -> bool {
+        if !self.instrument_fits_current_track(&instrument) {
+            return false;
+        }
+        if let Some(track) = self.project.tracks.get_mut(self.current_track) {
             track.instrument = instrument;
         }
+        self.status_error = None;
         self.sync_instrument_to_track();
+        true
     }
 
     pub fn start_remote(&mut self) {
@@ -2024,7 +2439,11 @@ impl DAWApp {
     fn process_remote_events(&mut self) {
         let Some(server) = &self.remote else { return };
         let events = server.poll_events();
-        let choices = self.instrument_choices();
+        let choices: Vec<(String, InstrumentId)> = self
+            .instrument_choices()
+            .into_iter()
+            .filter(|(_, id)| self.instrument_fits_track(self.current_track, id))
+            .collect();
         let current = self.current_instrument_name();
         if let Some(server) = &self.remote {
             server.set_instruments(
@@ -2058,8 +2477,7 @@ impl DAWApp {
                 RemoteEvent::SelectInstrument(label) => {
                     let id = InstrumentId::from_label(&label);
                     let known = choices.iter().any(|(_, c)| *c == id);
-                    if known {
-                        self.set_track_instrument(id);
+                    if known && self.set_track_instrument(id) {
                         self.status_message = Some(format!("Remote: switched to {}", label));
                     }
                 }
@@ -2076,5 +2494,79 @@ impl DAWApp {
                 RemoteEvent::DevicesChanged => {}
             }
         }
+    }
+}
+
+/// One clip holding every note `clips` would play, at the same times. Loop repeats are
+/// written out as notes and gaps between clips are kept as rests. The clip runs from the
+/// first clip's start to the last clip's end, rounded up to whole bars of `bar` beats.
+pub fn merge_clips(id: u64, clips: &[NoteClip], bar: f64) -> NoteClip {
+    let start = clips.iter().map(|c| c.start_beat).fold(f64::MAX, f64::min).max(0.0);
+    let end = clips.iter().map(|c| c.timeline_end()).fold(start, f64::max);
+    let name = match clips.first() {
+        Some(c) if clips.len() > 1 => format!("{} +{}", c.name, clips.len() - 1),
+        Some(c) => c.name.clone(),
+        None => "Merged".to_string(),
+    };
+    let mut merged = NoteClip::new(id, name, start);
+    for clip in clips {
+        for note in &clip.notes {
+            for t in clip.note_trigger_times(note, f64::INFINITY) {
+                let mut n = note.clone();
+                n.start_beat = t - start;
+                merged.notes.push(n);
+            }
+        }
+    }
+    merged.notes.sort_by(|a, b| {
+        a.start_beat
+            .partial_cmp(&b.start_beat)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then(a.pitch.cmp(&b.pitch))
+    });
+    let bar = bar.max(1.0);
+    merged.source_length = (((end - start) / bar).ceil() * bar).max(bar);
+    merged.content_length = merged.source_length;
+    merged.recompute_bounds();
+    merged.loop_end_beat = merged.start_beat + merged.visible_length();
+    merged
+}
+
+#[cfg(test)]
+mod clip_merge_tests {
+    use super::merge_clips;
+    use crate::model::{Note, NoteClip};
+
+    fn clip(id: u64, start: f64, notes: &[(u8, f64)]) -> NoteClip {
+        let mut c = NoteClip::new(id, format!("C{id}"), start);
+        for &(p, b) in notes {
+            c.add_note(Note::new(p, b, 1.0));
+        }
+        c
+    }
+
+    #[test]
+    fn merge_keeps_absolute_times_and_gaps() {
+        // Chord in bar 1, chord in bar 3 (bar 2 empty).
+        let a = clip(1, 0.0, &[(60, 0.0), (64, 0.0)]);
+        let b = clip(2, 8.0, &[(65, 0.0), (69, 0.0)]);
+        let m = merge_clips(10, &[a, b], 4.0);
+        assert_eq!(m.start_beat, 0.0);
+        let got: Vec<(u8, f64)> = m.notes.iter().map(|n| (n.pitch, n.start_beat)).collect();
+        assert_eq!(got, vec![(60, 0.0), (64, 0.0), (65, 8.0), (69, 8.0)]);
+        assert_eq!(m.visible_length(), 12.0);
+    }
+
+    #[test]
+    fn merge_writes_out_loop_repeats() {
+        let mut a = clip(1, 4.0, &[(60, 0.0)]);
+        a.loop_enabled = true;
+        a.loop_end_beat = 12.0; // a 4-beat clip played twice
+        let b = clip(2, 12.0, &[(67, 1.0)]);
+        let m = merge_clips(10, &[a, b], 4.0);
+        assert_eq!(m.start_beat, 4.0);
+        let got: Vec<f64> = m.notes.iter().map(|n| n.start_beat).collect();
+        assert_eq!(got, vec![0.0, 4.0, 9.0]);
+        assert_eq!(m.visible_length(), 12.0);
     }
 }

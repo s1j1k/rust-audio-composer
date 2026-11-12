@@ -448,7 +448,11 @@ fn handle_keyboard_input(app: &mut DAWApp, ctx: &egui::Context) {
     let (accent, down): (f32, Vec<bool>) = ctx.input(|i| {
         (
             keyboard_velocity_modifier(i.modifiers),
-            mapped.iter().map(|(k, _)| !typing && i.key_down(*k)).collect(),
+            // Ctrl/Cmd + key is a shortcut (Ctrl+D duplicate, ...), never a note.
+            mapped
+                .iter()
+                .map(|(k, _)| !typing && !i.modifiers.command && i.key_down(*k))
+                .collect(),
         )
     });
 

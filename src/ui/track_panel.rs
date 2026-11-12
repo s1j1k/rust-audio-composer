@@ -33,11 +33,92 @@ pub fn show_track_panel(app: &mut DAWApp, ui: &mut Ui) {
             ui.add(egui::Slider::new(&mut app.project.tracks[i].volume, 0.0..=1.0));
         });
 
-        ui.checkbox(&mut app.project.tracks[i].muted, "Mute track");
+        ui.horizontal(|ui| {
+            ui.checkbox(&mut app.project.tracks[i].muted, "Mute track");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let only_one = app.project.tracks.len() <= 1;
+                let delete = ui
+                    .add_enabled(
+                        !only_one,
+                        egui::Button::new(
+                            egui::RichText::new("Delete track").color(egui::Color32::from_rgb(240, 110, 110)),
+                        ),
+                    )
+                    .on_hover_text("Remove this track and its clips (also: right-click the track name)")
+                    .on_disabled_hover_text("Can't delete the only track");
+                if delete.clicked() {
+                    app.request_delete_track(i);
+                }
+            });
+        });
 
         ui.separator();
+        let selected = app.selected_clip_indices();
+        if selected.len() > 1 {
+            // Several clips: the operations that make sense on a group.
+            ui.label(format!("{} clips selected", selected.len()));
+            ui.horizontal_wrapped(|ui| {
+                if ui
+                    .button("Merge into one")
+                    .on_hover_text("Combine them into a single clip you can loop as a whole")
+                    .clicked()
+                {
+                    app.merge_selected_clips();
+                }
+                if ui.button("Copy").on_hover_text("Ctrl+C").clicked() {
+                    if let Some(json) = app.copy_selected_clips() {
+                        ui.ctx().copy_text(json);
+                    }
+                }
+                if ui.button("Duplicate").on_hover_text("Ctrl+D: paste right after").clicked() {
+                    app.duplicate_selected_clips();
+                }
+                if ui.button("Delete").clicked() {
+                    app.delete_selected_clips();
+                }
+            });
+            ui.label(
+                egui::RichText::new("Ctrl+click or Shift+click bubbles to add or remove them.")
+                    .small()
+                    .color(egui::Color32::GRAY),
+            );
+        }
         ui.label("Selected clip");
-        if let Some(clip_idx) = app.selected_clip {
+        if selected.len() <= 1 {
+            ui.horizontal_wrapped(|ui| {
+                if ui
+                    .add_enabled(app.selected_clip.is_some(), egui::Button::new("Copy"))
+                    .on_hover_text("Ctrl+C")
+                    .clicked()
+                {
+                    if let Some(json) = app.copy_selected_clips() {
+                        ui.ctx().copy_text(json);
+                    }
+                }
+                if ui
+                    .add_enabled(app.clip_clipboard.is_some(), egui::Button::new("Paste"))
+                    .on_hover_text("Ctrl+V: paste at the playhead")
+                    .clicked()
+                {
+                    app.paste_clips_at_playhead();
+                }
+                if ui
+                    .add_enabled(app.selected_clip.is_some(), egui::Button::new("Duplicate"))
+                    .on_hover_text("Ctrl+D: paste right after")
+                    .clicked()
+                {
+                    app.duplicate_selected_clips();
+                }
+                if ui
+                    .button("Select all")
+                    .on_hover_text("Select every clip on this track (then Merge)")
+                    .clicked()
+                {
+                    app.select_all_clips();
+                }
+            });
+        }
+        if let (Some(clip_idx), true) = (app.selected_clip, selected.len() <= 1) {
             if let Some(clip) = app.project.tracks[i].clips.get_mut(clip_idx) {
                 ui.horizontal(|ui| {
                     ui.label("Name:");
@@ -94,31 +175,39 @@ pub fn show_track_panel(app: &mut DAWApp, ui: &mut Ui) {
         ui.separator();
         ui.label("Piano roll view");
         ui.horizontal(|ui| {
-            ui.label("Octaves:");
-            ui.add(egui::Slider::new(&mut app.piano_roll_octave_count, 2..=5));
-        });
-        ui.horizontal(|ui| {
-            ui.label("Base octave:");
-            let mut oct = (app.piano_roll_octave_base / 12) as i32;
-            if ui.add(egui::DragValue::new(&mut oct).range(0..=8)).changed() {
-                app.piano_roll_octave_base = (oct * 12).clamp(0, 108) as u8;
+            if ui.button("▼ Octave").on_hover_text("Show lower notes").clicked() {
+                app.adjust_piano_roll_pitch(-12);
             }
+            if ui.button("▲ Octave").on_hover_text("Show higher notes").clicked() {
+                app.adjust_piano_roll_pitch(12);
+            }
+            ui.label(format!(
+                "{} – {}",
+                crate::music::theory::pitch_to_name(app.piano_roll_low()),
+                crate::music::theory::pitch_to_name(app.piano_roll_high()),
+            ));
         });
         ui.label(
-            egui::RichText::new("Scroll on piano keys to shift octave up/down.")
+            egui::RichText::new("Scroll over the piano roll to move up and down by semitones.")
                 .small()
                 .color(egui::Color32::GRAY),
         );
 
         let current = app.project.tracks[i].instrument.clone();
-        ui.label("Instrument:");
+        let drum_track = app.project.tracks[i].is_drum();
+        ui.label(if drum_track { "Drum kit:" } else { "Instrument:" });
         let mut picked: Option<InstrumentId> = None;
         egui::ComboBox::from_id_salt("selected_track_instrument")
             .selected_text(format!("{} {}", current.icon(), current.label()))
             .height(420.0)
             .show_ui(ui, |ui| {
                 let mut last_group = String::new();
-                for (group, id) in app.instrument_choices() {
+                // Only kits on drum tracks, only melodic instruments on melodic tracks.
+                for (group, id) in app
+                    .instrument_choices()
+                    .into_iter()
+                    .filter(|(_, id)| id.is_drum_track() == drum_track)
+                {
                     if group != last_group {
                         if !last_group.is_empty() {
                             ui.separator();
@@ -157,5 +246,47 @@ pub fn show_track_panel(app: &mut DAWApp, ui: &mut Ui) {
     ui.add(egui::Slider::new(&mut app.audio.master_volume, 0.0..=1.0).text("Volume"));
     if ui.button("Open DJ Tools").clicked() {
         app.show_dj_panel = true;
+    }
+}
+
+/// "Delete track?" confirmation, shown when the track still has notes (there's no undo).
+pub fn show_delete_track_confirm(app: &mut DAWApp, ctx: &egui::Context) {
+    let Some(index) = app.pending_track_delete else { return };
+    let Some(track) = app.project.tracks.get(index) else {
+        app.pending_track_delete = None;
+        return;
+    };
+    let name = track.name.clone();
+    let clips = track.clips.len();
+    let notes: usize = track.clips.iter().map(|c| c.notes.len()).sum();
+
+    let mut keep_open = true;
+    egui::Window::new("Delete track?")
+        .collapsible(false)
+        .resizable(false)
+        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+        .open(&mut keep_open)
+        .show(ctx, |ui| {
+            ui.label(format!(
+                "\"{name}\" has {clips} clip{} with {notes} note{}. This can't be undone.",
+                if clips == 1 { "" } else { "s" },
+                if notes == 1 { "" } else { "s" },
+            ));
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                let delete = egui::Button::new(
+                    egui::RichText::new("Delete track").color(egui::Color32::WHITE).strong(),
+                )
+                .fill(egui::Color32::from_rgb(190, 50, 50));
+                if ui.add(delete).clicked() {
+                    app.delete_track(index);
+                }
+                if ui.button("Cancel").clicked() {
+                    app.pending_track_delete = None;
+                }
+            });
+        });
+    if !keep_open {
+        app.pending_track_delete = None;
     }
 }

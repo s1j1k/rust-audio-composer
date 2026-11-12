@@ -26,5 +26,5 @@ pub use piano::{piano_keyboard_input, show_piano_body, show_piano_window};
 pub use piano_roll::{show_piano_roll_detail, visible_pitch_count as piano_roll_visible_pitch_count};
 pub use remote_panel::show_remote_panel;
 pub use timeline::show_multi_track_timeline;
-pub use track_panel::show_track_panel;
+pub use track_panel::{show_delete_track_confirm, show_track_panel};
 pub use transport::show_transport;

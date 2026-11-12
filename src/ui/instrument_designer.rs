@@ -543,8 +543,9 @@ fn instrument_chip(app: &mut DAWApp, ui: &mut Ui, id: InstrumentId, bass: bool, 
         .button(label)
         .on_hover_text("Click to preview · double-click to use on the selected track");
     if resp.double_clicked() {
-        app.set_track_instrument(id.clone());
-        app.status_message = Some(format!("Track instrument: {}", id.label()));
+        if app.set_track_instrument(id.clone()) {
+            app.status_message = Some(format!("Track instrument: {}", id.label()));
+        }
     } else if resp.clicked() {
         preview_phrase(app, id, bass, drums);
     }

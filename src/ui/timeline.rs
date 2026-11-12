@@ -266,12 +266,11 @@ fn draw_track_header_in_rect(app: &mut DAWApp, ui: &mut Ui, rect: Rect, index: u
             ui.spacing_mut().item_spacing = Vec2::new(4.0, 3.0);
             ui.horizontal(|ui| {
                 ui.colored_label(color, "●");
-                if ui
-                    .selectable_label(selected, egui::RichText::new(&track_name).strong())
-                    .clicked()
-                {
+                let name = ui.selectable_label(selected, egui::RichText::new(&track_name).strong());
+                if name.clicked() {
                     app.select_track(index);
                 }
+                name.context_menu(|ui| track_context_menu(app, ui, index));
                 if recording {
                     ui.colored_label(Color32::from_rgb(255, 60, 60), "⏺");
                 }
@@ -306,6 +305,19 @@ fn draw_track_header_in_rect(app: &mut DAWApp, ui: &mut Ui, rect: Rect, index: u
     if response.clicked() {
         app.select_track(index);
     }
+    response.context_menu(|ui| track_context_menu(app, ui, index));
+}
+
+/// Right-click menu on a track header.
+fn track_context_menu(app: &mut DAWApp, ui: &mut Ui, index: usize) {
+    if ui
+        .add_enabled(app.project.tracks.len() > 1, egui::Button::new("Delete track"))
+        .on_disabled_hover_text("Can't delete the only track")
+        .clicked()
+    {
+        app.request_delete_track(index);
+        ui.close_menu();
+    }
 }
 
 fn draw_track_clips(
@@ -335,8 +347,8 @@ fn draw_track_clips(
     let color = Color32::from_rgb(track_color[0], track_color[1], track_color[2]);
 
     for (clip_idx, clip) in clips.iter().enumerate() {
-        let is_selected =
-            app.current_track == track_index && app.selected_clip == Some(clip_idx);
+        let is_selected = app.current_track == track_index
+            && (app.selected_clip == Some(clip_idx) || app.selected_clip_ids.contains(&clip.id));
 
         let vis_len = clip.visible_length();
         let x0 = x_from_beat(app, clip.start_beat, inner.min.x);
@@ -361,7 +373,9 @@ fn draw_track_clips(
             } else {
                 egui::Stroke::new(
                     if is_selected { 2.0_f32 } else { 1.0_f32 },
-                    if clip.loop_enabled {
+                    if is_selected {
+                        Color32::WHITE
+                    } else if clip.loop_enabled {
                         Color32::from_rgb(120, 230, 160)
                     } else {
                         color.gamma_multiply(1.3)
@@ -540,9 +554,14 @@ fn interact_clip(
     }
 
     if body_resp.clicked() {
-        app.select_track(track_index);
-        app.selected_clip = Some(clip_idx);
+        let add = ui.input(|i| i.modifiers.command || i.modifiers.shift);
+        if add {
+            app.toggle_clip_selected(track_index, clip_idx);
+        } else {
+            app.select_single_clip(track_index, clip_idx);
+        }
     }
+    body_resp.context_menu(|ui| clip_context_menu(app, ui, track_index, clip_idx));
 
     if trim_start_resp.drag_started() {
         app.selected_clip = Some(clip_idx);
@@ -647,5 +666,51 @@ pub fn handle_clip_drag(app: &mut DAWApp, ui: &mut Ui, grid_origin_x: f32) {
                 clip.set_loop_end(beat.max(clip.start_beat + clip.visible_length()));
             }
         }
+    }
+}
+
+/// Right-click menu on a clip bubble. Right-clicking a clip outside the selection
+/// selects just that clip first, like most editors.
+fn clip_context_menu(app: &mut DAWApp, ui: &mut Ui, track_index: usize, clip_idx: usize) {
+    let in_selection = app.current_track == track_index
+        && app.selected_clip_indices().contains(&clip_idx);
+    if !in_selection {
+        app.select_single_clip(track_index, clip_idx);
+    }
+    let n = app.selected_clip_indices().len();
+    let what = if n == 1 { "clip".to_string() } else { format!("{n} clips") };
+    if ui.button(format!("Copy {what}  (Ctrl+C)")).clicked() {
+        if let Some(json) = app.copy_selected_clips() {
+            ui.ctx().copy_text(json);
+        }
+        ui.close_menu();
+    }
+    if ui
+        .add_enabled(app.clip_clipboard.is_some(), egui::Button::new("Paste at playhead  (Ctrl+V)"))
+        .clicked()
+    {
+        app.paste_clips_at_playhead();
+        ui.close_menu();
+    }
+    if ui.button(format!("Duplicate {what}  (Ctrl+D)")).clicked() {
+        app.duplicate_selected_clips();
+        ui.close_menu();
+    }
+    if ui
+        .add_enabled(n >= 2, egui::Button::new(format!("Merge {what} into one")))
+        .on_disabled_hover_text("Ctrl+click or Shift+click more clips to merge them")
+        .clicked()
+    {
+        app.merge_selected_clips();
+        ui.close_menu();
+    }
+    if ui.button("Select all clips on track").clicked() {
+        app.select_all_clips();
+        ui.close_menu();
+    }
+    ui.separator();
+    if ui.button(format!("Delete {what}")).clicked() {
+        app.delete_selected_clips();
+        ui.close_menu();
     }
 }

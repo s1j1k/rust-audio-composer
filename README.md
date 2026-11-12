@@ -92,6 +92,8 @@ Why local Wi-Fi instead of the internet? Same-room Wi-Fi is a few milliseconds. 
 | Guitar, Bass, Strings, Flute, Brass, Organ, Pad | FreePats | single sample, velocity-tracked tone |
 | Drums | FreePats Synthesizer Percussion | velocity-tracked tone |
 
+Drum tracks only take drum kits and melodic tracks only take melodic instruments, so changing the sound never turns a beat into random pitches. To use both, add one track of each kind.
+
 Multi-velocity instruments crossfade between real soft and hard recordings, so soft playing sounds genuinely softer (rounder, darker), not just quieter. These download once in the background. See [CREDITS.md](CREDITS.md).
 
 Drum kits play from the General MIDI drum map *and* from any octave (C = kick, D = snare, F♯ = closed hat, A♯ = open hat…), so they work from a phone. Closed hats choke open hats.
@@ -148,13 +150,21 @@ Effects apply live on the master output; per-track effects apply fully on **WAV 
 
 **Piano Roll (bottom)**, the detailed editor for the selected track:
 - Vertical piano keys on the left; keys you're holding light up (blue = mouse/keyboard, green = phone), along with their row
+- The keys look like a real keyboard on its side: low notes at the bottom, black keys shorter, octaves marked by a bold **C**
+- **Scroll** over the roll to move up and down by semitones, or use **▼ Octave / ▲ Octave** in Track Controls. The view reaches the whole MIDI range, down to the deepest bass notes
 - Notes being recorded grow in real time at the playhead, and the view scrolls to follow it
 - Click the grid to place notes, or use the virtual piano / phone while recording
 
 ### Multi-Track, Transport, Composition
 - Unlimited tracks; per-track volume, mute, instrument
+- **Delete a track** from Track Controls or by right-clicking its name in the timeline (a track with notes asks first; there's no undo yet)
+- **Clips:** Ctrl+click or Shift+click bubbles to select several. **Ctrl+C / Ctrl+V** copy and paste at the playhead, **Ctrl+D** duplicates right after, and **Merge** combines the selection into one clip (gaps and loop repeats included) that you can then loop as a whole. All of these are also in the bubble's right-click menu and in Track Controls
 - Play / Pause / Stop / Record, BPM (40–240), time signature
-- **🎼 Compose:** key detection, chord progression suggestions, interactive circle of fifths
+- **🎼 Compose:**
+  - **Key:** use the key detected from your melodic notes, or choose any key yourself (also by clicking the circle of fifths)
+  - **Chord progressions:** click chords one at a time (each adds one bar at the playhead and moves on), or **Add all** to drop the whole progression in as one loopable clip
+  - **Genre tips** for trap, hip hop, drum & bass, UK garage and classical: tempo range with a one-click **Set BPM**, arrangement, drum and harmony tips, and genre-flavoured progressions. Drum & bass figures follow [DnB Academy's BPM and structure guide](https://app.dnbacademy.net/learn/drum-and-bass-bpm-and-structure)
+  - Interactive circle of fifths
 
 ### Save, Load & Export
 - **💾 Save Project** / **📂 Load Project** (`.rac.json`, includes custom instruments)
