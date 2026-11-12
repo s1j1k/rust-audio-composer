@@ -4,7 +4,7 @@ use crate::audio::genre_synth::{self, soft_clip, GenreVoice, Macros, MAX_GENRE_V
 use crate::audio::multisample;
 use crate::audio::samples::{InstrumentSample, SampleLibrary};
 use crate::model::drum::DrumKind;
-use crate::model::instrument::{DrumKit, GenrePreset, SynthParams};
+use crate::model::instrument::{DrumKit, GenrePreset, ProfileSample, SynthParams};
 use crate::music::theory::midi_to_frequency;
 use std::f32::consts::{PI, TAU};
 use std::sync::Arc;
@@ -424,6 +424,55 @@ impl SynthEngine {
                     (s.data.clone(), s.data.clone(), 0.0, s.root_freq, false)
                 }
             };
+        self.start_sample_voice(pitch, velocity, params, soft, hard, mix, root, multi, age);
+    }
+
+    /// Play a custom instrument's own one-note sample, pitch-shifted to `pitch`.
+    ///
+    /// The sample already contains its attack/decay and tone, so the voice envelope is
+    /// neutral (instant attack, full sustain); only `release` (key-up fade) and the track
+    /// filter are applied, plus the usual velocity → level/brightness response.
+    pub fn sample_note_on(
+        &mut self,
+        pitch: u8,
+        velocity: f32,
+        sample: &ProfileSample,
+        release: f32,
+        filter_cutoff: f32,
+    ) {
+        let age = self.next_age();
+        // The voice steps through the buffer at target_freq / root_freq per output sample.
+        // Scaling the root by engine_rate / sample_rate also corrects for a sample recorded
+        // at a different rate (e.g. a 48 kHz WAV on a 44.1 kHz device).
+        let root = midi_to_frequency(sample.root_pitch) * self.sample_rate / sample.sample_rate.max(1.0);
+        let params = SynthParams {
+            attack: 0.0015,
+            decay: 0.02,
+            sustain: 1.0,
+            release: release.clamp(0.02, 6.0),
+            brightness: 0.5,
+            detune: 0.0,
+            filter_cutoff: filter_cutoff.clamp(0.05, 1.0),
+            drive: 0.0,
+            ..SynthParams::default()
+        };
+        let data = sample.data.clone();
+        self.start_sample_voice(pitch, velocity, params, data.clone(), data, 0.0, root, false, age);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn start_sample_voice(
+        &mut self,
+        pitch: u8,
+        velocity: f32,
+        params: SynthParams,
+        soft: Arc<Vec<f32>>,
+        hard: Arc<Vec<f32>>,
+        mix: f32,
+        root: f32,
+        multi: bool,
+        age: u64,
+    ) {
         // Re-striking a held/ringing note: let the old one fade quickly (piano-style).
         for v in &mut self.voices {
             if v.is_active() && v.pitch == pitch {

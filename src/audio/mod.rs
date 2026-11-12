@@ -5,6 +5,7 @@ pub mod drum_kits;
 pub mod drums;
 pub mod genre_synth;
 pub mod multisample;
+pub mod note_render;
 pub mod effects;
 pub mod sample_sources;
 pub mod samples;

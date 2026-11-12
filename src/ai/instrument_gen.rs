@@ -577,6 +577,7 @@ pub fn describe_to_instrument(description: &str, name: &str, base_kind: SampleKi
         description: description.to_string(),
         base_kind: it.params.sample_kind,
         params: it.params,
+        sample: None,
     }
 }
 

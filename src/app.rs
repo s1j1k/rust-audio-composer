@@ -2606,7 +2606,7 @@ impl eframe::App for DAWApp {
             let mut show = self.show_instrument_designer;
             egui::Window::new("AI Instrument Designer")
                 .open(&mut show)
-                .default_size([400.0, 500.0])
+                .default_size([680.0, 720.0])
                 .show(ctx, |ui| {
                     crate::ui::show_instrument_designer(self, ui);
                 });

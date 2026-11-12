@@ -62,6 +62,7 @@ fn render_track_buffer(
     let mut synth = SynthEngine::new(sample_rate);
     let mut fx = EffectProcessor::new(sample_rate);
     let profile_name = track.instrument.label();
+    let note_sample = profiles.get(&profile_name).and_then(|p| p.sample.clone());
     let params = profiles
         .get(&profile_name)
         .map(|p| p.params.clone())
@@ -117,9 +118,13 @@ fn render_track_buffer(
                     }
                 }
             } else if active.insert(pitch) {
-                let mut p = params.clone();
-                p.filter_cutoff = (p.filter_cutoff * track_filter).clamp(0.05, 1.0);
-                synth.note_on(pitch, vel, p);
+                if let Some(sample) = &note_sample {
+                    synth.sample_note_on(pitch, vel, sample, params.release, track_filter);
+                } else {
+                    let mut p = params.clone();
+                    p.filter_cutoff = (p.filter_cutoff * track_filter).clamp(0.05, 1.0);
+                    synth.note_on(pitch, vel, p);
+                }
             }
             event_idx += 1;
         }
