@@ -156,6 +156,9 @@ fn view_menu(app: &mut DAWApp, ui: &mut Ui) {
     if ui.checkbox(&mut app.show_instrument_designer, "Sound designer").clicked() {
         ui.close_menu();
     }
+    if ui.checkbox(&mut app.show_library, "Instrument library").clicked() {
+        ui.close_menu();
+    }
     let mut dj = app.show_dj_panel;
     if ui.checkbox(&mut dj, "DJ mode").clicked() {
         app.toggle_dj_mode();

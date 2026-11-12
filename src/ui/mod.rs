@@ -9,6 +9,7 @@ pub mod dj_widgets;
 mod drum_sequencer;
 pub mod drum_icons;
 pub mod grid;
+pub mod library_panel;
 pub mod menu_bar;
 pub mod instrument_designer;
 mod remote_panel;

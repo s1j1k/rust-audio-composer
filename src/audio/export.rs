@@ -2,7 +2,7 @@ use crate::audio::effects::EffectProcessor;
 use crate::audio::engine::trigger_note;
 use crate::audio::synth::SynthEngine;
 use crate::model::effects::MasterEffects;
-use crate::model::instrument::{CustomInstrument, InstrumentProfile};
+use crate::model::instrument::{CustomInstrument, InstrumentId, InstrumentProfile};
 use crate::model::Project;
 use std::collections::{HashMap, HashSet};
 
@@ -72,6 +72,10 @@ fn render_track_buffer(
     let fallback = crate::model::instrument::default_params_for_kind(
         crate::model::instrument::SampleKind::Piano,
     );
+    if let InstrumentId::Sampled(name) = &track.instrument {
+        // Offline render can't wait for the background loader.
+        crate::library::load_blocking(name, sample_rate);
+    }
     let track_filter = track.effects.effective_lowpass();
     let secs_per_sample = 1.0 / sample_rate as f64;
     let beats_per_sec = project.beats_per_second();

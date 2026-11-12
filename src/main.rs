@@ -3,6 +3,7 @@ mod app;
 mod audio;
 mod history;
 mod dj;
+mod library;
 mod model;
 mod music;
 mod remote;

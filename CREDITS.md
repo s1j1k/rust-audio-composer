@@ -77,6 +77,15 @@ Downloaded samples are stored at:
 
 Each instrument includes a `{name}.attribution.txt` with license and source URL.
 
+## Your sample library
+
+Samples you add through the Instrument Library are downloaded or imported by you, not
+shipped with ChorDAW. Each one's title, author, licence and link are saved in its
+instrument's `instrument.json` and shown under **Credits** in the library. Only licences
+that allow use in released/sold music are accepted (CC0, CC BY, or royalty-free-for-music
+packs). Freesound content is used through the Freesound API with each user's own key,
+under the API's non-commercial terms for the app itself.
+
 ## App icon
 
 `assets/icon.png`, `assets/icon-512.png` and `assets/icon.ico` are a placeholder: the letters

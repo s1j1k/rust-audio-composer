@@ -388,6 +388,13 @@ impl SynthEngine {
         self.play_drum(sample, kind, velocity);
     }
 
+    /// Play a raw sample once at its own pitch (previewing sounds in the library).
+    pub fn audition(&mut self, sample: Arc<Vec<f32>>) {
+        let slot = self.drum_voice_slot();
+        // Any non-hat kind: hats choke each other, nothing else is kind-specific.
+        self.drum_voices[slot].trigger(sample, DrumKind::Cymbal, 0.9);
+    }
+
     pub fn library(&self) -> &SampleLibrary {
         &self.library
     }
@@ -415,15 +422,25 @@ impl SynthEngine {
         }
         let age = self.next_age();
         let kind = params.sample_kind;
-        let (soft, hard, mix, root, multi) =
-            match multisample::zones(kind, self.sample_rate).and_then(|z| z.pick(pitch, velocity))
+        // A library instrument has one recording per note (no velocity layers), so
+        // velocity sets the level as for single-sample instruments.
+        let library_pick = params
+            .library
+            .as_deref()
+            .and_then(|name| crate::library::zones(name, self.sample_rate))
+            .and_then(|z| z.pick(pitch, velocity));
+        let (soft, hard, mix, root, multi) = match library_pick {
+            Some(z) => (z.soft, z.hard, 0.0, z.root_freq, false),
+            None => match multisample::zones(kind, self.sample_rate)
+                .and_then(|z| z.pick(pitch, velocity))
             {
                 Some(z) => (z.soft, z.hard, z.hard_mix, z.root_freq, true),
                 None => {
                     let s: &InstrumentSample = self.library.get(kind);
                     (s.data.clone(), s.data.clone(), 0.0, s.root_freq, false)
                 }
-            };
+            },
+        };
         // Re-striking a held/ringing note: let the old one fade quickly (piano-style).
         for v in &mut self.voices {
             if v.is_active() && v.pitch == pitch {

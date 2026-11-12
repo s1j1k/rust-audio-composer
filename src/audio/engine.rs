@@ -299,6 +299,11 @@ impl AudioEngine {
         vel
     }
 
+    /// Preview a sample in the instrument library.
+    pub fn audition(&mut self, sample: std::sync::Arc<Vec<f32>>) {
+        self.synth.audition(sample);
+    }
+
     pub fn stop_note(&mut self, pitch: u8) {
         self.synth.note_off(pitch);
     }
@@ -376,6 +381,11 @@ pub fn trigger_note(
         InstrumentId::Preset(preset) => {
             let macros = Macros::for_preset(*preset, None, track_filter);
             synth.preset_note_on(*preset, pitch, velocity, macros);
+        }
+        InstrumentId::Sampled(name) => {
+            let mut params = crate::library::synth_params(name);
+            params.filter_cutoff = (params.filter_cutoff * track_filter).clamp(0.05, 1.0);
+            synth.note_on(pitch, velocity, params);
         }
         other => {
             let mut params = profiles

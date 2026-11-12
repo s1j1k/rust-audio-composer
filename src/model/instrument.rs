@@ -235,6 +235,8 @@ pub enum InstrumentId {
     Harp,
     Preset(GenrePreset),
     Kit(DrumKit),
+    /// A sample instrument from the user's library (imported note samples).
+    Sampled(String),
 }
 
 impl InstrumentId {
@@ -253,6 +255,7 @@ impl InstrumentId {
             Self::Harp => "Concert Harp".to_string(),
             Self::Preset(p) => p.label().to_string(),
             Self::Kit(k) => k.label().to_string(),
+            Self::Sampled(name) => name.clone(),
         }
     }
 
@@ -271,6 +274,7 @@ impl InstrumentId {
             Self::Harp => "🪕",
             Self::Preset(p) => p.icon(),
             Self::Kit(_) => "♪",
+            Self::Sampled(_) => "♫",
         }
     }
 
@@ -292,6 +296,9 @@ impl InstrumentId {
         if let Some(k) = DrumKit::from_label(label) {
             return Self::Kit(k);
         }
+        if crate::library::names().iter().any(|n| n == label) {
+            return Self::Sampled(label.to_string());
+        }
         Self::Custom(label.to_string())
     }
 
@@ -306,7 +313,7 @@ impl InstrumentId {
             Self::Organ => Some(SampleKind::Organ),
             Self::Pad => Some(SampleKind::Pad),
             Self::Harp => Some(SampleKind::Harp),
-            Self::Drums | Self::Custom(_) | Self::Preset(_) | Self::Kit(_) => None,
+            Self::Drums | Self::Custom(_) | Self::Preset(_) | Self::Kit(_) | Self::Sampled(_) => None,
         }
     }
 
@@ -341,6 +348,9 @@ pub struct SynthParams {
     /// When set, the instrument is rendered by the genre synth engine instead of a sample.
     #[serde(default)]
     pub preset: Option<GenrePreset>,
+    /// When set, notes play from this sample instrument in the user's library.
+    #[serde(default)]
+    pub library: Option<String>,
 }
 
 impl Default for SynthParams {
@@ -356,6 +366,7 @@ impl Default for SynthParams {
             filter_cutoff: 1.0,
             drive: 0.0,
             preset: None,
+            library: None,
         }
     }
 }
@@ -423,6 +434,7 @@ pub fn default_params_for_kind(kind: SampleKind) -> SynthParams {
         filter_cutoff,
         drive: 0.0,
         preset: None,
+        library: None,
     }
 }
 
@@ -471,6 +483,7 @@ pub fn preset_nominal_params(preset: GenrePreset) -> SynthParams {
         filter_cutoff: 0.7,
         drive,
         preset: Some(preset),
+        library: None,
     }
 }
 

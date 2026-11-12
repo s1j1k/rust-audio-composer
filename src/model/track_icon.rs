@@ -90,6 +90,7 @@ impl TrackIcon {
             InstrumentId::Drums | InstrumentId::Kit(_) => Self::Drums,
             InstrumentId::Preset(_) => Self::Saw,
             InstrumentId::Custom(_) => Self::Robot,
+            InstrumentId::Sampled(_) => Self::Notes,
         }
     }
 }
