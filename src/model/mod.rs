@@ -1,3 +1,5 @@
+pub mod automation;
+pub mod dj;
 pub mod drum;
 pub mod drum_pattern;
 pub mod effects;
@@ -9,6 +11,7 @@ pub mod project;
 pub mod saved_project;
 pub mod song_section;
 pub mod track;
+pub mod track_icon;
 
 pub use drum::{DrumKind, SEQUENCER_STEPS, step_to_beat};
 pub use drum_pattern::SavedDrumPattern;
@@ -24,3 +27,6 @@ pub use project::Project;
 pub use saved_project::SavedProject;
 pub use song_section::SongSection;
 pub use track::{Track, TrackKind};
+pub use automation::FxParam;
+pub use dj::{XfadeSide, DJ_CHANNELS};
+pub use track_icon::TrackIcon;

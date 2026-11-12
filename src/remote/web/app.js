@@ -93,6 +93,12 @@ function connect() {
       case 'rec':
         setRec(m.state, m.beats);
         break;
+      case 'dj':
+        if (typeof applyDj === 'function') applyDj(m);
+        break;
+      case 'meters':
+        if (typeof applyMeters === 'function') applyMeters(m);
+        break;
     }
   };
 }

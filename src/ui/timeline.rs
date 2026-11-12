@@ -5,10 +5,32 @@ use crate::ui::grid::{
     handle_zoom_scroll, playhead_scrubber, section_color, show_zoom_controls, x_from_beat,
     RULER_HEIGHT,
 };
+use crate::model::automation::FxParam;
+use crate::ui::dj_widgets;
 use crate::ui::theme;
 use egui::{Color32, CursorIcon, Rect, Sense, Ui, Vec2};
+use egui_phosphor::regular as ph;
 
 const CLIP_HANDLE_WIDTH: f32 = 8.0;
+/// Height of an open automation lane under a track.
+const LANE_HEIGHT: f32 = 66.0;
+/// Lane points snap to this fraction of a beat.
+const LANE_SNAP: f64 = 1.0 / 16.0;
+
+/// Top offset (from the first row) and height of each track row, lane included.
+fn row_layout(app: &DAWApp) -> Vec<(f32, bool)> {
+    let mut y = 0.0;
+    app.project
+        .tracks
+        .iter()
+        .map(|t| {
+            let top = y;
+            let lane = t.lane_view.is_some();
+            y += TRACK_ROW_HEIGHT + if lane { LANE_HEIGHT } else { 0.0 };
+            (top, lane)
+        })
+        .collect()
+}
 
 pub fn show_multi_track_timeline(app: &mut DAWApp, ui: &mut Ui) {
     ui.heading("Timeline");
@@ -28,7 +50,11 @@ pub fn show_multi_track_timeline(app: &mut DAWApp, ui: &mut Ui) {
     let bw = beat_width(app);
     let grid_width = total_beats * bw;
     let track_count = app.project.tracks.len();
-    let total_height = track_count as f32 * TRACK_ROW_HEIGHT;
+    let rows = row_layout(app);
+    let total_height = rows
+        .last()
+        .map(|&(top, lane)| top + TRACK_ROW_HEIGHT + if lane { LANE_HEIGHT } else { 0.0 })
+        .unwrap_or(0.0);
     let body_height = RULER_HEIGHT + total_height;
 
     ui.horizontal_top(|ui| {
@@ -46,14 +72,19 @@ pub fn show_multi_track_timeline(app: &mut DAWApp, ui: &mut Ui) {
                 Color32::from_rgb(28, 28, 34),
             );
             for i in 0..track_count {
+                let (top, lane) = rows[i];
                 let row_rect = Rect::from_min_size(
-                    egui::pos2(
-                        left_rect.min.x,
-                        left_rect.min.y + RULER_HEIGHT + i as f32 * TRACK_ROW_HEIGHT,
-                    ),
+                    egui::pos2(left_rect.min.x, left_rect.min.y + RULER_HEIGHT + top),
                     Vec2::new(TRACK_HEADER_WIDTH, TRACK_ROW_HEIGHT),
                 );
                 draw_track_header_in_rect(app, ui, row_rect, i);
+                if lane {
+                    let lane_rect = Rect::from_min_size(
+                        row_rect.left_bottom(),
+                        Vec2::new(TRACK_HEADER_WIDTH, LANE_HEIGHT),
+                    );
+                    draw_lane_header(app, ui, lane_rect, i);
+                }
             }
         }
 
@@ -85,13 +116,18 @@ pub fn show_multi_track_timeline(app: &mut DAWApp, ui: &mut Ui) {
                 draw_beat_grid_lines(app, &painter, grid_rect, total_beats);
 
                 for i in 0..track_count {
+                    let (top, lane) = rows[i];
                     let row_rect = Rect::from_min_size(
-                        egui::pos2(
-                            grid_rect.min.x,
-                            grid_rect.min.y + i as f32 * TRACK_ROW_HEIGHT,
-                        ),
+                        egui::pos2(grid_rect.min.x, grid_rect.min.y + top),
                         Vec2::new(content_width, TRACK_ROW_HEIGHT),
                     );
+                    if lane {
+                        let lane_rect = Rect::from_min_size(
+                            row_rect.left_bottom(),
+                            Vec2::new(content_width, LANE_HEIGHT),
+                        );
+                        draw_lane(app, ui, &painter, lane_rect, i, grid_rect.min.x);
+                    }
 
                     let selected = app.current_track == i;
                     // Opaque colours only: a translucent tint lets the light theme's white
@@ -153,8 +189,8 @@ pub fn show_multi_track_timeline(app: &mut DAWApp, ui: &mut Ui) {
 
                 // Row dividers on the header column (same Y as grid rows).
                 let header_painter = ui.painter_at(left_rect);
-                for i in 1..track_count {
-                    let y = left_rect.min.y + RULER_HEIGHT + i as f32 * TRACK_ROW_HEIGHT;
+                for &(top, _) in rows.iter().skip(1) {
+                    let y = left_rect.min.y + RULER_HEIGHT + top;
                     header_painter.line_segment(
                         [
                             egui::pos2(left_rect.min.x, y),
@@ -295,7 +331,26 @@ fn draw_track_header_in_rect(app: &mut DAWApp, ui: &mut Ui, rect: Rect, index: u
         ui.vertical(|ui| {
             ui.spacing_mut().item_spacing = Vec2::new(4.0, 3.0);
             ui.horizontal(|ui| {
-                ui.colored_label(color, "●");
+                let icon = app.project.tracks[index].icon();
+                let icon_resp = dj_widgets::icon_button(ui, icon, color, 18.0)
+                    .on_hover_text("Track icon — click to change");
+                let popup_id = ui.id().with(("icon_popup", index));
+                if icon_resp.clicked() {
+                    ui.memory_mut(|m| m.toggle_popup(popup_id));
+                }
+                egui::popup::popup_below_widget(
+                    ui,
+                    popup_id,
+                    &icon_resp,
+                    egui::PopupCloseBehavior::CloseOnClickOutside,
+                    |ui| {
+                        ui.set_min_width(240.0);
+                        if let Some(picked) = dj_widgets::icon_grid(ui, icon, color) {
+                            app.project.tracks[index].icon = Some(picked);
+                            ui.memory_mut(|m| m.close_popup());
+                        }
+                    },
+                );
                 let name = ui.selectable_label(selected, egui::RichText::new(&track_name).strong());
                 if name.clicked() {
                     app.select_track(index);
@@ -320,6 +375,32 @@ fn draw_track_header_in_rect(app: &mut DAWApp, ui: &mut Ui, rect: Rect, index: u
                     if ui.add(mute).on_hover_text("Mute track").clicked() {
                         muted = !muted;
                         app.project.tracks[index].muted = muted;
+                    }
+                    let open = app.project.tracks[index].lane_view.is_some();
+                    let automated = app.project.tracks[index].has_automation();
+                    let lane_btn = egui::Button::new(egui::RichText::new(ph::CHART_LINE).small().color(
+                        if open {
+                            Color32::BLACK
+                        } else if automated {
+                            dj_widgets::AUTOMATED
+                        } else {
+                            Color32::WHITE
+                        },
+                    ))
+                    .fill(if open { dj_widgets::AUTOMATED } else { Color32::from_rgb(55, 55, 64) })
+                    .min_size(Vec2::new(20.0, 16.0));
+                    if ui
+                        .add(lane_btn)
+                        .on_hover_text("Effects over time: show / hide this track's automation lane")
+                        .clicked()
+                    {
+                        let t = &mut app.project.tracks[index];
+                        t.lane_view = if open {
+                            None
+                        } else {
+                            // Open the first automated lane, else the filter.
+                            Some(t.automation.iter().find(|l| !l.lane.is_empty()).map(|l| l.param).unwrap_or(FxParam::Filter))
+                        };
                     }
                 });
             });
@@ -796,5 +877,207 @@ fn clip_context_menu(app: &mut DAWApp, ui: &mut Ui, track_index: usize, clip_idx
     if ui.button(format!("Delete {what}")).clicked() {
         app.delete_selected_clips();
         ui.close_menu();
+    }
+}
+
+/// Left-column controls for an open automation lane: which parameter, clear, close.
+fn draw_lane_header(app: &mut DAWApp, ui: &mut Ui, rect: Rect, index: usize) {
+    ui.painter_at(rect).rect_filled(rect, 0.0, Color32::from_rgb(28, 29, 34));
+    let Some(param) = app.project.tracks[index].lane_view else { return };
+    let inner = rect.shrink2(Vec2::new(8.0, 6.0));
+    ui.allocate_new_ui(egui::UiBuilder::new().max_rect(inner).layout(egui::Layout::top_down(egui::Align::Min)), |ui| {
+        ui.set_clip_rect(inner.intersect(ui.clip_rect()));
+        ui.spacing_mut().item_spacing = Vec2::new(4.0, 3.0);
+        let mut choice = param;
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new(ph::CHART_LINE).color(dj_widgets::AUTOMATED));
+            egui::ComboBox::from_id_salt(("lane_param", index))
+                .width(TRACK_HEADER_WIDTH - 44.0)
+                .selected_text(egui::RichText::new(param.label()).small())
+                .show_ui(ui, |ui| {
+                    for &p in FxParam::all() {
+                        let has = app.project.tracks[index].lane(p).is_some();
+                        let label = if has { format!("{} ●", p.label()) } else { p.label().to_string() };
+                        ui.selectable_value(&mut choice, p, label);
+                    }
+                });
+        });
+        ui.horizontal(|ui| {
+            let has = app.project.tracks[index].lane(param).is_some();
+            if ui
+                .add_enabled(has, egui::Button::new(egui::RichText::new(format!("{} Clear", ph::TRASH)).small()))
+                .on_hover_text("Remove every point on this lane (the knob keeps its current value)")
+                .clicked()
+            {
+                app.dj_clear_automation(crate::dj::DjTarget::Track(index, param));
+            }
+            if ui
+                .button(egui::RichText::new(format!("{} Hide", ph::X)).small())
+                .clicked()
+            {
+                app.project.tracks[index].lane_view = None;
+            }
+        });
+        if choice != param {
+            app.project.tracks[index].lane_view = Some(choice);
+        }
+    });
+}
+
+/// An automation lane: the curve over time for one parameter. Click to add a point,
+/// drag to move it, double- or right-click to delete it.
+fn draw_lane(
+    app: &mut DAWApp,
+    ui: &mut Ui,
+    painter: &egui::Painter,
+    rect: Rect,
+    index: usize,
+    origin_x: f32,
+) {
+    let Some(param) = app.project.tracks[index].lane_view else { return };
+    let color = {
+        let c = app.project.tracks[index].color;
+        Color32::from_rgb(c[0], c[1], c[2])
+    };
+    painter.rect_filled(rect, 0.0, Color32::from_rgb(26, 27, 32));
+    painter.line_segment(
+        [rect.left_top(), rect.right_top()],
+        egui::Stroke::new(1.0, Color32::from_rgb(50, 52, 60)),
+    );
+    let (lo, hi) = param.range();
+    let area = rect.shrink2(Vec2::new(0.0, 6.0));
+    let y_for = |v: f32| area.max.y - (v - lo) / (hi - lo) * area.height();
+    let v_for = |y: f32| param.clamp(lo + (area.max.y - y) / area.height() * (hi - lo));
+    if param.bipolar() || param == FxParam::Volume {
+        let y = y_for(param.neutral());
+        painter.extend(egui::Shape::dashed_line(
+            &[egui::pos2(rect.min.x, y), egui::pos2(rect.max.x, y)],
+            egui::Stroke::new(1.0, Color32::from_rgb(60, 62, 72)),
+            4.0,
+            4.0,
+        ));
+    }
+
+    let points: Vec<(f64, f32)> = app.project.tracks[index]
+        .lane(param)
+        .map(|l| l.points.iter().map(|p| (p.beat, p.value)).collect())
+        .unwrap_or_default();
+    let bw = beat_width(app);
+    let pos_of = |b: f64, v: f32| egui::pos2(origin_x + b as f32 * bw, y_for(v));
+    let beat_at = |x: f32| ((x - origin_x) / bw).max(0.0) as f64;
+
+    if points.is_empty() {
+        let v = app.project.tracks[index].static_value(param);
+        painter.line_segment(
+            [egui::pos2(rect.min.x, y_for(v)), egui::pos2(rect.max.x, y_for(v))],
+            egui::Stroke::new(1.0, Color32::from_rgb(110, 112, 124)),
+        );
+        painter.text(
+            egui::pos2(rect.min.x + 8.0, rect.min.y + 6.0),
+            egui::Align2::LEFT_TOP,
+            format!(
+                "{} — fixed at {}. Click to add points, or arm WRITE in DJ mode and turn the knob while playing.",
+                param.label(),
+                param.describe(v)
+            ),
+            theme::font(theme::FONT_SM),
+            Color32::from_rgb(140, 142, 154),
+        );
+    } else {
+        let curve = dj_widgets::mix(Color32::from_rgb(26, 27, 32), color, 0.9);
+        let mut line = vec![egui::pos2(rect.min.x, y_for(points[0].1))];
+        line.extend(points.iter().map(|&(b, v)| pos_of(b, v)));
+        line.push(egui::pos2(rect.max.x, y_for(points[points.len() - 1].1)));
+        // Filled area under the curve (opaque, darker) for readability.
+        for pair in line.windows(2) {
+            let (a, b) = (pair[0], pair[1]);
+            if b.x - a.x < 0.5 {
+                continue;
+            }
+            painter.add(egui::Shape::convex_polygon(
+                vec![a, b, egui::pos2(b.x, area.max.y), egui::pos2(a.x, area.max.y)],
+                dj_widgets::mix(Color32::from_rgb(26, 27, 32), color, 0.18),
+                egui::Stroke::NONE,
+            ));
+        }
+        painter.add(egui::Shape::line(line, egui::Stroke::new(2.0, curve)));
+    }
+
+    // Interaction.
+    let id = ui.id().with(("lane", index));
+    let resp = ui.interact(rect, id, Sense::click_and_drag());
+    let pointer = resp.interact_pointer_pos().or(resp.hover_pos());
+    let near = |p: egui::Pos2| -> Option<usize> {
+        points
+            .iter()
+            .enumerate()
+            .map(|(i, &(b, v))| (i, pos_of(b, v).distance(p)))
+            .filter(|(_, d)| *d < 8.0)
+            .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
+            .map(|(i, _)| i)
+    };
+    let hovered_point = pointer.and_then(near);
+    let drag_key = id.with("drag");
+    let mut dragging: Option<usize> = ui.data(|d| d.get_temp(drag_key)).flatten();
+    let snap = |b: f64| ((b / LANE_SNAP).round() * LANE_SNAP).max(0.0);
+
+    if resp.drag_started() {
+        if let Some(p) = pointer {
+            dragging = Some(match near(p) {
+                Some(i) => i,
+                None => app.project.tracks[index]
+                    .lane_mut(param)
+                    .set_point(snap(beat_at(p.x)), v_for(p.y)),
+            });
+        }
+    }
+    if resp.dragged() {
+        if let (Some(i), Some(p)) = (dragging, pointer) {
+            let beat = snap(beat_at(p.x));
+            app.project.tracks[index].lane_mut(param).move_point(i, beat, v_for(p.y));
+        }
+    }
+    if resp.drag_stopped() {
+        dragging = None;
+    }
+    ui.data_mut(|d| d.insert_temp(drag_key, dragging));
+
+    let delete = resp.double_clicked() || resp.secondary_clicked();
+    if delete {
+        if let Some(i) = hovered_point {
+            let lane = app.project.tracks[index].lane_mut(param);
+            lane.remove_point(i);
+            if lane.is_empty() {
+                app.project.tracks[index].clear_lane(param);
+            }
+        }
+    } else if resp.clicked() && hovered_point.is_none() {
+        if let Some(p) = pointer {
+            app.project.tracks[index]
+                .lane_mut(param)
+                .set_point(snap(beat_at(p.x)), v_for(p.y));
+        }
+    }
+
+    // Points (drawn after edits so they track the cursor this frame).
+    if let Some(lane) = app.project.tracks[index].lane(param) {
+        for (i, p) in lane.points.iter().enumerate() {
+            let hot = hovered_point == Some(i) || dragging == Some(i);
+            let c = pos_of(p.beat, p.value);
+            painter.circle_filled(c, if hot { 5.5 } else { 3.5 }, if hot { Color32::WHITE } else { color });
+            painter.circle_stroke(c, if hot { 5.5 } else { 3.5 }, egui::Stroke::new(1.0, Color32::from_rgb(16, 16, 20)));
+        }
+    }
+    if resp.hovered() {
+        ui.ctx().set_cursor_icon(if hovered_point.is_some() { CursorIcon::Grab } else { CursorIcon::Crosshair });
+        if let Some(p) = pointer {
+            let beat = beat_at(p.x);
+            resp.on_hover_text(format!(
+                "{} at beat {:.2}: {}\nClick = add point · drag = move · double/right-click = delete",
+                param.label(),
+                beat,
+                param.describe(app.project.tracks[index].value_at(param, beat))
+            ));
+        }
     }
 }

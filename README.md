@@ -68,6 +68,7 @@ What you get:
 - **Record from the phone.** Tap **REC** on the phone (or ⏺ Record on the desktop): one bar of count-in, then your playing is recorded onto the selected track. Tap **STOP** to finish. Notes appear live in the timeline bubble and the piano roll as you play.
 - **Chain several devices into one long keyboard.** Tick *Chain devices* in the Remote window, put the devices in left-to-right order with ◀ ▶ (use **Flash** to tell them apart), and keys continue from one screen to the next, sized for the smallest screen.
 - **Safe disconnects.** If a phone locks or drops off Wi-Fi, its notes are released automatically, so nothing gets stuck.
+- **DJ mixer on the phone.** Tap **DJ** in the phone's top bar to swap the keyboard for the mixer: the four channel strips (EQ, filter, echo, reverb, fader, A/THRU/B), the crossfader, live VU meters, **PLAY**, **WRITE** and **REC MIX**. Several fingers work at once, so you can ride a fader and sweep a filter together. Moves from the phone are recorded as automation just like the desktop knobs. A tablet next to the computer makes a good second "control surface" screen.
 
 **Tap-strength velocity (HTTPS, optional).** iOS only shares the accelerometer with secure pages, so the app also serves HTTPS on port 7879 using a certificate authority it creates on your computer. One-time setup is shown in the Remote window: open `http://<computer-ip>:7878/ca.crt` on the phone, install the profile, enable it under *Settings → General → About → Certificate Trust Settings*, then use the `https://…:7879/` address and turn on **⚙ → Enable tap strength**.
 
@@ -131,14 +132,32 @@ It runs entirely on your computer.
 - **Velocity curve** setting (📱 Remote window) for light or heavy touch
 - Recording captures velocity automatically
 
-### DJ Tools (🎛 DJ)
-Mix effects for the **master bus** and **each track**:
-- **Distance / underwater:** muffled, far-away sound (auto low-pass + reverb)
-- **Reverb:** space and depth
-- **Phaser swirl:** phase movement (fade in/out character)
-- **Brightness:** manual low-pass filter
+### DJ Mode (💿 DJ)
+Click **💿 DJ** in the transport bar (or **Open DJ mode** in the track panel). The bottom panel turns into a two-turntable DJ setup, with the timeline staying visible above it:
 
-Effects apply live on the master output; per-track effects apply fully on **WAV export** and partially during live playback.
+- **Four channel strips.** Load any track onto a channel from the menu at the top of the strip. Each strip has **HI / MID / LOW EQ** (turn fully left to *kill* a band), a **FILTER** knob (left = low-pass/muffled, right = high-pass/thin, centre = off), **ECHO** (tempo-synced, and the repeats ring out when you turn it down) and **VERB** sends, a **channel fader**, an LED **VU meter**, mute, and an **A / THRU / B** crossfader switch.
+- **Crossfader** with a no-dip curve: both sides are at full level in the middle. The **◀ A** and **B ▶** buttons write a beat-exact crossfade over 1–16 bars starting at the playhead, which is an easy way to get a clean transition.
+- **Platters** spin at 33⅓ rpm with the song. Grab one to hold the music like a hand on vinyl, and turn it to scrub.
+- **Master section:** tone, reverb, distance and phaser for the whole mix, master fader and meters.
+- **Controls behave like hardware:** drag a knob up or right to turn it up (hold **Shift** for fine moves), **double-click** to reset, scroll to nudge, hover for the exact value, and right-click for automation options.
+- **Tips** (💡 in the DJ header) walks a beginner through a first mix.
+
+Every track now has its own audio bus, so EQ, filter, echo, reverb, fader and crossfader all apply **live** and in **WAV export**, and they sound the same in both.
+
+### Effects over time (automation)
+Effects can change during the song: a filter sweep into a drop, echo on just the last bar of a clip, or a slow crossfade.
+
+- **Record your moves:** arm **WRITE** in DJ mode, press play, and turn knobs or move faders. While you hold a control its moves are written at the playhead, replacing whatever was there; when you let go, the existing curve takes over again.
+- **Draw and edit:** click the 📈 button in a track's header to open its **automation lane** under the track, and pick the parameter (volume, filter, EQ, echo, reverb, phaser, distance). Click to add a point, drag to move it, and double-click or right-click to delete it. Points snap to 1/16 beat. Values ramp smoothly between points.
+- **Tweak a curve with a knob:** when a control already has automation, moving it while the song is stopped sets the point at the playhead. Stop, move the playhead, turn the knob, and repeat to shape a curve.
+- Automated controls show an **orange light**; a red ring means it's recording right now. **Clear** (lane header, or right-click a knob) removes the automation and keeps the current value.
+- Automation is saved in the project file and rendered in **WAV export**.
+
+### Live mixdown (REC MIX)
+Press **⏺ REC MIX** in DJ mode (or on the phone) to record exactly what you hear, including every track, effect and live knob move, to a WAV file. Playback starts automatically if it was stopped. Press **STOP** to finish and choose where to save. If you cancel the dialog, the take is saved to `Music/Rust Audio Composer/` so a good performance is never lost. With **WRITE** also armed, your moves are kept as automation, so you can replay or fine-tune the mix and export it again.
+
+### Track icons
+Click the icon at the left of a track's header to pick one of 44 icons (keys, guitar, vocals, drums, waveforms, vinyl, rocket, ghost…). New tracks get an icon that matches their instrument. Icons also show on the DJ channel strips and on the phone. They come from **[Phosphor Icons](https://phosphoricons.com)** (MIT licence, via the [`egui-phosphor`](https://crates.io/crates/egui-phosphor) crate); see [CREDITS.md](CREDITS.md#icons).
 
 ### Timeline & Piano Roll
 
@@ -194,7 +213,7 @@ Open **Help → User guide** for the in-app guide.
 | **🎼 Compose** | Key detection, chord suggestions, circle of fifths |
 | **✨ Sound Designer** | Describe and shape your own instruments |
 | **Drums** | Beat sequencer (bottom panel on drum tracks) |
-| **DJ** | Mix effects |
+| **💿 DJ** | DJ mode: 4-channel mixer, crossfader, platters, effect automation, live mixdown |
 | **View → Options…** | Interface font, interface size and help display |
 | **Space** | Play / pause, or stop recording |
 
@@ -217,6 +236,8 @@ Open **Help → User guide** for the in-app guide.
 
 ## Architecture
 
+Each track plays through its own **bus** (voices → EQ → DJ filter → phaser/tone → echo → reverb → fader × crossfader), and the buses are summed into the master effects and the speakers. The UI sends each bus its settings once per frame, with automation already evaluated at the playhead, and the audio thread glides between updates so knob moves never click. WAV export runs the same effect chain and re-reads automation every 64 samples.
+
 ```
  iPhone / iPad (Safari, no install)               Your computer (one Rust program)
  ┌──────────────────────────────┐   local Wi-Fi  ┌───────────────────────────────────────┐
@@ -236,9 +257,15 @@ Open **Help → User guide** for the in-app guide.
 src/
   main.rs                # Entry point
   app.rs                 # DAW state, playback, recording, remote event handling
+  dj.rs                  # DJ mode logic: control moves, automation writing, scrubbing, REC MIX
   model/                 # Project, tracks, notes, instruments (genre presets, kits)
+    automation.rs        # Automation lanes (breakpoints, interpolation, recording)
+    dj.rs                # DJ channels, crossfader side and curve
+    track_icon.rs        # Track icons (Phosphor glyphs)
   audio/
-    engine.rs            # Instrument routing, live input, velocity curves
+    engine.rs            # Per-track buses, instrument routing, live input, meters, mixdown capture
+    effects.rs           # Channel strip DSP: 3-band EQ, DJ filter (SVF), echo, phaser, reverb
+    export.rs            # Offline WAV render (same effects + automation)
     synth.rs             # Voices: sample playback (velocity layers), drums, sustain pedal
     genre_synth.rs       # Real-time synth presets (808, Reese, Rhodes, strings…)
     drum_kits.rs         # Synthesized genre drum kits
@@ -252,6 +279,8 @@ src/
   music/                 # Music theory: keys, chords, circle of fifths
   ai/                    # Natural-language timbre interpreter
   ui/                    # Transport, tracks, piano, piano roll, designer, remote panel…
+    dj_mode.rs           # DJ mode layout (decks, channel strips, master, crossfader)
+    dj_widgets.rs        # Hardware-style knob, fader, crossfader, VU meter, platter
 ```
 
 ## Roadmap / TODO
@@ -262,6 +291,13 @@ See [TODO.md](TODO.md). Highlights:
 - Native iOS app with Bluetooth MIDI (playing without Wi-Fi)
 - Undo/redo, MIDI file import/export
 
+### Future features
+- **Custom hand-drawn track icons:** draw your own icon (or import a small image) for each track, alongside the Phosphor set
+- Headphone cue (pre-listen a channel before bringing it into the mix) with a second audio output
+- Beat-matched decks playing *different* songs, with independent tempo and nudge on the platters
+- Stereo panning and stereo effects (the engine is mono today)
+- Automation for master effects, and for the crossfader as an editable timeline lane
+
 ## Tech Stack
 
 - **Rust** 2021 edition
@@ -270,3 +306,4 @@ See [TODO.md](TODO.md). Highlights:
 - **tokio / axum / rustls / rcgen** for the local-network remote keyboard
 - **hound / claxon** for WAV and FLAC decoding
 - **serde** for project files and the wire protocol
+- **egui-phosphor** for the Phosphor icon font (MIT)

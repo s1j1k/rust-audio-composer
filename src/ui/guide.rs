@@ -71,7 +71,7 @@ const SECTIONS: &[Section] = &[
                · Piano roll view — octaves and base octave for the editor.\n\
                · Instrument picker — melodic samples, drums, or custom AI instruments.\n\
                · + Melodic Track / + Drum Track to add tracks.\n\
-               · Master volume and shortcut to DJ Tools.",
+               · Master volume and shortcut to DJ mode.",
     },
     Section {
         title: "Composition assistant",
@@ -90,13 +90,18 @@ const SECTIONS: &[Section] = &[
                Uses local keyword mapping today; cloud AI is planned.",
     },
     Section {
-        title: "DJ tools",
-        body: "Open DJ for mix effects on the master bus and the selected track:\n\n\
-               · Distance / underwater — far-away muffled tone.\n\
-               · Reverb — space and depth.\n\
-               · Phaser swirl — sweeping motion.\n\
-               · Brightness — low-pass filter.\n\n\
-               Per-track effects apply fully on WAV export.",
+        title: "DJ mode",
+        body: "Click DJ in the transport bar. The bottom panel becomes two turntables and a \
+               4-channel mixer; the timeline stays on top.\n\n\
+               · Load a track onto each channel (menu at the top of the strip).\n\
+               · HI / MID / LOW EQ (fully left = kill), FILTER (left muffled, right thin), \
+               ECHO and VERB, channel fader, VU meter, mute, and A / THRU / B.\n\
+               · Crossfader blends A and B. The ◀ A / B ▶ buttons write a crossfade over N bars.\n\
+               · Grab a platter to hold and scrub the song.\n\
+               · Drag knobs (Shift = fine), double-click to reset, right-click for automation.\n\n\
+               Effects over time: arm WRITE and play, then move controls to record them. Open a \
+               track's lane with the chart button in its header to add, drag or delete points.\n\n\
+               REC MIX records what you hear to a WAV file, live.",
     },
     Section {
         title: "Options & appearance",

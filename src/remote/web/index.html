@@ -18,23 +18,34 @@
   <div id="app">
     <header id="bar">
       <button id="status" class="chip" aria-label="Connection status"><span class="dot"></span><span id="status-text">Connecting…</span></button>
-      <button id="rec" class="btn rec" aria-label="Record"><span class="rec-dot"></span><span id="rec-text">REC</span></button>
-      <select id="instrument" aria-label="Instrument"></select>
-      <div class="group" id="octave-group">
+      <button id="mode-btn" class="btn mode" aria-label="Switch between keyboard and DJ mixer">DJ</button>
+      <button id="rec" class="btn rec keys-only" aria-label="Record"><span class="rec-dot"></span><span id="rec-text">REC</span></button>
+      <select id="instrument" class="keys-only" aria-label="Instrument"></select>
+      <div class="group keys-only" id="octave-group">
         <button id="oct-down" class="btn" aria-label="Octave down">◀</button>
         <span id="oct-label" class="label">C3</span>
         <button id="oct-up" class="btn" aria-label="Octave up">▶</button>
       </div>
-      <div class="group" id="zoom-group">
+      <div class="group keys-only" id="zoom-group">
         <button id="zoom-out" class="btn" aria-label="More keys">−</button>
         <button id="zoom-in" class="btn" aria-label="Fewer, bigger keys">+</button>
       </div>
       <span id="chain-label" class="label hidden"></span>
+      <div class="dj-only master"><span class="label">MASTER</span><div class="hvu"><div id="master-vu-fill"></div></div></div>
       <button id="settings-btn" class="btn" aria-label="Settings">⚙</button>
     </header>
     <main id="stage">
       <div id="pedal" aria-label="Sustain pedal"><span>SUSTAIN</span></div>
       <div id="keys"></div>
+    </main>
+    <main id="dj">
+      <div id="dj-channels"></div>
+      <div id="dj-bottom">
+        <button id="dj-play" class="dj-btn">PLAY</button>
+        <button id="dj-write" class="dj-btn" title="Record knob moves as automation while playing">WRITE</button>
+        <div id="xf" class="xf" aria-label="Crossfader"></div>
+        <button id="dj-mixrec" class="dj-btn rec-mix">REC MIX</button>
+      </div>
     </main>
   </div>
 
@@ -72,5 +83,6 @@
   <div id="rotate" class="hidden"><div>↻<br>Rotate to landscape for more keys</div></div>
   <div id="flash" class="hidden"></div>
   <script src="/app.js"></script>
+  <script src="/dj.js"></script>
 </body>
 </html>
